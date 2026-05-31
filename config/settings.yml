@@ -1,0 +1,24 @@
+# 기본 설정을 상속하되, 깨진 엔진을 default 엔진 목록에서 제거
+# (boolean true 대신 dict 형태로 작성해야 engines.remove가 동작)
+# - wikidata: SearXNG 2026.5.x + Wikidata API 스키마 변경으로 init 실패 (KeyError: 'name')
+# - ahmia, torch: Tor 네트워크용 엔진. Tor 프록시 없으면 항상 실패
+use_default_settings:
+  engines:
+    remove:
+      - wikidata
+      - ahmia
+      - torch
+
+server:
+  # 필수: 아무 문자나 길게 입력하세요 (보안용)
+  secret_key: "ultrasecretkey_for_my_local_searxng"
+  port: 8080
+  bind_address: "0.0.0.0"
+  # bot detection / rate limiter 비활성화 (limiter.toml 없을 때의 WARNING 제거 + 로컬 개발 편의)
+  limiter: false
+  public_instance: false
+
+search:
+  formats:
+    - html
+    - json  # LangChain 연동용

@@ -1,0 +1,84 @@
+services:
+  searxng: # 서비스의 논리적 이름을 정의합니다.
+    container_name: searxng # 도커 엔진에서 이 컨테이너를 식별하는 고정 이름을 설정합니다.
+    image: searxng/searxng:latest # 사용할 이미지입니다. 최신 버전의 SearxNG 이미지를 가져옵니다.
+    ports:
+      - "8888:8080" # 내 PC의 8888 포트를 컨테이너 안의 8080(기본 포트)과 연결합니다.
+    volumes:
+      - ./config/:/etc/searxng:rw # 내 PC의 config 폴더를 컨테이너 내부 설정 경로에 동기화(읽기/쓰기 권한)합니다.
+    environment:
+      - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml # SearxNG에게 설정 파일의 정확한 위치를 알려주는 환경 변수입니다.
+    
+    # --- 보안 및 권한 설정 (이 부분이 공식 문서 권장 사항입니다) ---
+    cap_drop:
+      - ALL # 컨테이너가 가질 수 있는 모든 불필요한 리눅스 커널 권한을 일단 박탈합니다. (보안 강화)
+    cap_add:
+      - CHOWN  # 파일 소유권을 변경할 수 있는 권한을 부여합니다. (설정 파일 관리용)
+      - SETGID # 프로세스의 그룹 ID를 설정할 수 있는 권한을 부여합니다.
+      - SETUID # 프로세스의 사용자 ID를 설정할 수 있는 권한을 부여합니다.
+    
+    # --- 로그 관리 설정 ---
+    logging:
+      driver: "json-file" # 로그를 JSON 파일 형태로 기록합니다.
+      options:
+        max-size: "1m" # 로그 파일 하나의 크기를 최대 1MB로 제한합니다. (용량 폭주 방지)
+        max-file: "1"  # 로그 파일은 최신본 1개만 유지합니다. (디스크 공간 절약)
+    restart: always
+
+  qdrant:
+    image: qdrant/qdrant:latest  # 최신 이미지를 권장합니다.
+    container_name: qdrant
+    ports:
+      - "6333:6333" # REST API (기본 접속용)
+      - "6334:6334" # gRPC (성능 위주 통신용)
+    volumes:
+      - ./qdrant_data:/qdrant/storage # 데이터 영구 저장을 위해 필수!
+    restart: always
+
+  postgres:
+    # LangGraph checkpointer + PostgresStore + 마스터 테이블용
+    image: postgres:16-alpine
+    container_name: raglaw-postgres
+    ports:
+      - "5432:5432"  # 호스트 5432 ↔ 컨테이너 5432
+    environment:
+      # .env의 DB_USER / DB_PASSWORD / DB_NAME 와 동일하게 유지
+      POSTGRES_USER: ${DB_USER:-raglaw}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-raglaw_dev_pw}
+      POSTGRES_DB: ${DB_NAME:-raglaw}
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data  # 데이터 영구 저장
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-raglaw} -d ${DB_NAME:-raglaw}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  korean-law-mcp:
+    # build 지시: 이 디렉토리의 Dockerfile을 사용해 로컬에서 이미지를 빌드합니다.
+    # (기존 Dockerfile이 빌드+런타임 멀티스테이지로 이미 구성되어 있음)
+    build:
+      context: ./korean-law-mcp
+      dockerfile: Dockerfile
+    image: korean-law-mcp:local   # 빌드된 이미지에 붙일 태그
+    container_name: korean-law-mcp
+    ports:
+      - "3000:3000"               # 호스트(PC) 3000 ↔ 컨테이너 3000 — Python 앱은 http://localhost:3000으로 접근
+    env_file:
+      - ./korean-law-mcp/.env     # LAW_OC 등 환경변수 주입 (gitignore 대상)
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # 필요 시 보안/리미트 옵션 (자세한 항목은 korean-law-mcp/CLAUDE.md 참고)
+      # - CORS_ORIGIN=http://localhost
+      # - RATE_LIMIT_RPM=120
+      # - TRUST_PROXY=1
+    healthcheck:
+      # Dockerfile의 HEALTHCHECK와 동일 — /health 엔드포인트가 200 응답해야 healthy
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: always
