@@ -565,3 +565,45 @@ memory_builder.add_edge("remove_entity", END)
 
 # 서브그래프 컴파일
 memory_manager_graph = memory_builder.compile()
+
+async def ensure_conversation_history_collection():
+    """서버 시작 시 호출 - conversation_history 컬렉션과 payload 인덱스를 보장"""
+    from qdrant_client.http import models as rest
+
+    collection_name = "conversation_history"
+
+    # 1. 컬렉션 보장
+    if await QDRANT_DB.collection_exists(collection_name):
+        print(f"Qdrant 컬렉션 '{collection_name}' 이미 존재")
+    else:
+        # 임베딩 차원을 실제 임베딩 1회로 동적 감지 (모델 변경에도 대응)
+        sample_vec = await GEMINI_EMBEDDINGS.aembed_query("dimension probe")
+        dim = len(sample_vec)
+
+        await QDRANT_DB.create_collection(
+            collection_name=collection_name,
+            vectors_config={
+                "combined": VectorParams(size=dim, distance=Distance.COSINE),
+                "query":    VectorParams(size=dim, distance=Distance.COSINE),
+                "response": VectorParams(size=dim, distance=Distance.COSINE),
+            },
+        )
+        print(f"Qdrant 컬렉션 '{collection_name}' 생성 완료 (dim={dim})")
+
+    # 2. payload index 보장 (컬렉션 존재 여부와 무관하게 idempotent)
+    #    동일한 (field_name, schema)로 다시 호출해도 Qdrant는 에러 없이 무시함
+    index_specs = [
+        ("user_id",     rest.PayloadSchemaType.KEYWORD),
+        ("thread_id",   rest.PayloadSchemaType.KEYWORD),
+        ("entity_keys", rest.PayloadSchemaType.KEYWORD),
+        ("timestamp",   rest.PayloadSchemaType.FLOAT),
+    ]
+    for field_name, schema in index_specs:
+        try:
+            await QDRANT_DB.create_payload_index(
+                collection_name=collection_name,
+                field_name=field_name,
+                field_schema=schema,
+            )
+        except Exception as e:
+            print(f"[Qdrant] payload index '{field_name}' 등록 skip: {e}")

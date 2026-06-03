@@ -20,3 +20,14 @@ docker compose down
 docker compose up -d --build
 ```
 
+# API Request Body Sample
+
+```json
+{
+  "userId": "admin",
+  "projectId": "test",
+  "isotime": "2026-06-02T20:30:00+09:00",
+  "message": "한번 일반적인 대화도 잘 받아쳐주는지 궁금한데, 오늘자 한국에서 발생한 뉴스에 대해서 하나 아무거나 알려줄 수 있어?",
+  "model": "gemini/gemini-2.5-flash-lite"
+}
+```

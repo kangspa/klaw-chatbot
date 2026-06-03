@@ -21,6 +21,7 @@ import uvicorn
 from langgraph.checkpoint.memory import MemorySaver
 from api import api_router
 from api.chatbot.functions.agent import build_chatbot_agent
+from api.chatbot.functions.summary import ensure_conversation_history_collection
 
 # .env 파일에서 환경 변수 로드
 dotenv.load_dotenv()
@@ -29,6 +30,7 @@ dotenv.load_dotenv()
 async def lifespan(app: FastAPI):
     # ───── startup ─────
     # DB 의존성 제거: in-memory 체크포인터(MemorySaver)로 LangGraph 에이전트 compile
+    await ensure_conversation_history_collection()
     # 같은 thread_id 내에서 multi-turn 유지는 되지만 서버 재시작 시 휘발됨 (테스트용).
     checkpointer = MemorySaver()
     app.state.chatbot_agent = build_chatbot_agent(checkpointer)
