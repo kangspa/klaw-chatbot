@@ -1,7 +1,7 @@
 from api.load_variable import MODEL_MANAGER, AgentState, GEMINI_EMBEDDINGS, QDRANT_DB
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import SystemMessage, AIMessage, RemoveMessage, HumanMessage
-from qdrant_client.models import PointStruct
+from qdrant_client.models import PointStruct, VectorParams, Distance
 from datetime import datetime
 import uuid, json
 from langgraph.graph import StateGraph, END
