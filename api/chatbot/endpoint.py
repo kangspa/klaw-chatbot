@@ -80,7 +80,7 @@ router = APIRouter()
 
 class PlanChatRequest(BaseModel):
     userId: str = Field(..., description="사용자 ID")
-    projectId: str = Field(..., description="프로젝트 ID (thread_id로 사용됨)")
+    sessionId: str = Field(..., description="세션 ID (thread_id로 사용됨)")
     isotime: str = Field(..., description="클라이언트가 보낸 오프셋(Offset)이 포함된 ISO 8601 형식의 시간 문자열 (형식:YYYY-MM-DDTHH:mm:ss+HH:mm) (예시:2026-04-07T23:16:04+09:00)")
     message: str = Field(..., description="사용자 입력 메시지")
     model: Optional[str] = Field(
@@ -104,12 +104,12 @@ async def post_plan_chat(data: PlanChatRequest, request: Request):
     # lifespan에서 compile된 에이전트를 app.state에서 꺼내 사용
     chatbot_agent = request.app.state.chatbot_agent
 
-    # thread_id 구성 (사용자별, 프로젝트별로 상태가 유지되도록 함)
-    # 사용자가 언급한 "프로젝트와 일치하는 thread_id"를 그대로 사용하거나 조합해서 사용
+    # thread_id 구성 (사용자별, 세션별로 상태가 유지되도록 함)
+    # 클라이언트가 보낸 세션 ID를 thread_id로 그대로 사용 (세션 단위로 대화 상태 격리)
     config = {
         "configurable": {
             "user_id": data.userId,
-            "thread_id": data.projectId,
+            "thread_id": data.sessionId,
             "isotime": data.isotime,
             "model": data.model,
         }
@@ -157,13 +157,13 @@ async def post_plan_chat(data: PlanChatRequest, request: Request):
             detail=f"에이전트 호출 중 오류가 발생했습니다: [{err_type}] {err_repr}"
         )
 
-@router.get("/{projectId}/history")
-async def get_draft_history(projectId: str, request: Request):
+@router.get("/{sessionId}/history")
+async def get_draft_history(sessionId: str, request: Request):
     """
-    특정 프로젝트의 대화 기록을 조회하는 End-point
+    특정 세션의 대화 기록을 조회하는 End-point
     """
     chatbot_agent = request.app.state.chatbot_agent
-    config = {"configurable": {"thread_id": projectId}}
+    config = {"configurable": {"thread_id": sessionId}}
 
     try:
         # 현재 상태 조회 (AsyncPostgresSaver는 aget_state로 비동기 호출)
