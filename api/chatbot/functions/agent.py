@@ -9,48 +9,74 @@ from api.chatbot.functions.tools import web_search, page_crawl4ai, search_entity
 from api.chatbot.functions.summary import memory_manager_graph
 
 # === 도구 통합 ===
-# 로컬에서 직접 정의한 도구 + korean-law-mcp(도커)에서 받아온 도구
+# 로컬 도구(직접 정의) + korean-law-mcp 법률 도구.
+# 법률 도구(LAW_TOOLS)는 load_variable.py에서 langchain_mcp_adapters의
+# MCP_CLIENT.get_tools()로 '런타임에 동적 로드'된다. 즉 서버가 도구를
+# 추가/이름변경/삭제해도 이 파일에 도구 이름을 하드코딩하지 않으므로
+# 코드 수정 없이 그대로 반영된다.
 local_tools = [web_search, page_crawl4ai, search_entity, search_history, search_memory]
 tools = local_tools + LAW_TOOLS  # MCP 서버 다운 시 LAW_TOOLS는 빈 리스트로 안전 폴백
 tool_node = ToolNode(tools)
 
+# 로컬 도구 이름 집합 (MCP 도구와 구분하기 위한 기준)
+LOCAL_TOOL_NAMES = {t.name for t in local_tools}
+
 # === 도구별 사용 한도 ===
-# 명시되지 않은 도구는 DEFAULT_TOOL_LIMIT 적용
-DEFAULT_TOOL_LIMIT = 3
-TOOL_LIMITS = {
-    # --- 로컬 도구 ---
+# 로컬 도구는 우리가 직접 관리하므로 이름별 명시 한도를 둔다.
+# MCP(법률) 도구는 이름을 하드코딩하지 않고 '공통 기본 한도'를 적용한다.
+#   → korean-law-mcp가 도구를 추가/변경해도 자동으로 한도가 적용된다.
+DEFAULT_TOOL_LIMIT = 3       # 한도 미지정 로컬 도구 폴백
+MCP_TOOL_LIMIT = 5           # korean-law-mcp 도구 공통 기본 한도
+
+LOCAL_TOOL_LIMITS = {
     "web_search": 2,
-    "page_crawl4ai": 999,         # 무제한
+    "page_crawl4ai": 999,    # 무제한
     "search_entity": 3,
     "search_history": 3,
     "search_memory": 2,
-
-    # --- korean-law-mcp 도구 (실제 서버 노출 17개와 정확히 일치) ---
-    # 법령 조회 (3개)
-    "search_law": 5,              # 법령 검색 → mst 획득 (자주 호출)
-    "get_law_text": 8,            # 조문 본문 (한 사건에서 여러 조문 인용 가능)
-    "get_annexes": 3,             # 별표/서식 (금액표·요율표·별지)
-
-    # 판례·결정례 통합 (2개, 17개 도메인 커버)
-    "search_decisions": 5,        # 판례·헌재·조세심판·공정위·노동위·해석례 등 통합 검색
-    "get_decision_text": 5,       # 결정례 전문
-
-    # 체인 도구 (8개) — 한 번 호출로 여러 RPC 자동 실행, 무거우므로 보수적 한도
-    "chain_full_research": 1,     # 가장 무거움: AI검색+법령+판례+해석례 종합
-    "chain_law_system": 2,        # 법체계: 3단비교(법률→시행령→시행규칙), 위임구조
-    "chain_action_basis": 2,      # 처분·허가 근거 (penalty 시나리오: 과태료 기준+감경)
-    "chain_dispute_prep": 2,      # 쟁송 대비 (판례+행심+전문결정례 병렬)
-    "chain_amendment_track": 2,   # 개정 추적 (신구대조+조문이력, timeline 시나리오)
-    "chain_ordinance_compare": 2, # 조례 비교 (compliance 시나리오: 상위법 적합성)
-    "chain_procedure_detail": 2,  # 절차·비용·서식 (manual 시나리오)
-    "chain_document_review": 2,   # 계약서·약관 리스크 분석
-
-    # 킬러·검증·메타 (4개)
-    "verify_citations": 3,        # 환각 방지 인용 검증 (답변 마무리 필수)
-    "impact_map": 2,              # 조문 영향 그래프 (인용 판례·해석·자치법규 역방향 탐색 + mermaid, v4.0)
-    "discover_tools": 2,          # 미노출 76개 전문 도구 탐색
-    "execute_tool": 5,            # 전문 도구 프록시 실행
 }
+
+# (선택) 특정 MCP 도구만 한도를 따로 주고 싶을 때의 오버라이드.
+# 여기에 없는 MCP 도구는 MCP_TOOL_LIMIT을 쓰며, 서버에서 사라진 이름이
+# 남아 있어도 단순히 무시되므로(=stale 키여도) 안전하다. 즉 필수가 아니라 '튜닝'용.
+MCP_TOOL_LIMIT_OVERRIDES = {
+    "chain_full_research": 5,   # 가장 무거움(AI검색+법령+판례+해석 종합)이라 보수적으로 1회
+}
+
+
+def get_tool_limit(tool_name: str) -> int:
+    """도구 이름으로 사용 한도를 결정. MCP 도구는 이름 하드코딩 없이 기본/오버라이드를 적용한다."""
+    if tool_name in LOCAL_TOOL_NAMES:
+        return LOCAL_TOOL_LIMITS.get(tool_name, DEFAULT_TOOL_LIMIT)
+    # 로컬 도구가 아니면 korean-law-mcp 도구로 간주
+    return MCP_TOOL_LIMIT_OVERRIDES.get(tool_name, MCP_TOOL_LIMIT)
+
+
+# 로컬 도구 사용 지침 (우리가 만든 도구라 큐레이션 유지).
+# MCP 법률 도구는 서버가 준 description을 그대로 노출하므로 여기 넣지 않는다.
+LOCAL_TOOL_PROMPTS = {
+    "web_search": "- 실시간 정보(뉴스/날씨/최신 소식)는 'web_search'\n",
+    "page_crawl4ai": "- 검색된 URL 본문 파싱은 'page_crawl4ai'\n",
+    "search_memory": "- 전체 대화 흐름/요약 조회는 'search_memory'\n",
+    "search_history": "- 과거 대화의 구체 팩트 검색은 'search_history' (entity_filter로 특정 엔티티 한정)\n",
+    "search_entity": "- 대화 중 등장한 객체/주제 정보는 'search_entity'\n",
+}
+
+
+def build_mcp_tool_catalog(mcp_tools, max_desc: int = 220) -> str:
+    """
+    현재 바인딩된 korean-law-mcp 도구를 'name: description' 목록으로 렌더링.
+    설명은 서버가 제공한 tool.description을 그대로 사용하므로,
+    도구가 늘거나 바뀌어도 코드 수정 없이 LLM에게 최신 목록이 전달된다.
+    """
+    lines = []
+    for t in mcp_tools:
+        desc = " ".join((t.description or "").split())  # 개행/중복 공백 정리
+        if len(desc) > max_desc:
+            desc = desc[:max_desc] + "…"
+        lines.append(f"- {t.name}: {desc}" if desc else f"- {t.name}")
+    return "\n".join(lines)
+
 
 async def general_chat(state: AgentState, config: RunnableConfig):
     """
@@ -62,12 +88,11 @@ async def general_chat(state: AgentState, config: RunnableConfig):
     all_counts = state.get("tool_counts", {"general_chat": {}})
     current_counts = all_counts.get("general_chat", {})
 
-    # 1. 도구별 한도 필터링
+    # 1. 도구별 한도 필터링 (MCP 도구는 이름 하드코딩 없이 get_tool_limit로 동적 적용)
     available_tools = []
     for tool in tools:
         current_usage = current_counts.get(tool.name, 0)
-        limit = TOOL_LIMITS.get(tool.name, DEFAULT_TOOL_LIMIT)
-        if current_usage < limit:
+        if current_usage < get_tool_limit(tool.name):
             available_tools.append(tool)
 
     # 2. 모델 로드
@@ -101,70 +126,43 @@ async def general_chat(state: AgentState, config: RunnableConfig):
 - 사용자가 법률 외 질문을 하면 자연스럽게 응대하되, 본분(법률 상담)으로 부드럽게 유도하세요.
 """
 
-    # 5. 도구 사용 지침 (각 도구 description은 자동으로 LLM에게 전달되므로, 핵심 도구만 사용 패턴 안내)
+    # 5. 도구 사용 지침
+    #    - 로컬 도구: 우리가 만든 것이라 큐레이션된 한 줄 지침 유지
+    #    - MCP(법률) 도구: 서버가 준 name/description을 그대로 노출
+    #      → 도구 이름을 하드코딩하지 않으므로 korean-law-mcp 업데이트가 자동 반영됨
+    #    (각 도구의 상세 스키마/description은 bind_tools로 이미 LLM에 전달되며,
+    #     아래 목록은 LLM이 한눈에 도구를 고르도록 돕는 개요 역할)
     if available_tools:
-        prompt_map = {
-            # --- 로컬 도구 ---
-            "web_search": "- 실시간 정보(뉴스/날씨/최신 소식)는 'web_search'\n",
-            "page_crawl4ai": "- 검색된 URL 본문 파싱은 'page_crawl4ai'\n",
-            "search_memory": "- 전체 대화 흐름/요약 조회는 'search_memory'\n",
-            "search_history": "- 과거 대화의 구체 팩트 검색은 'search_history' (entity_filter로 특정 엔티티 한정)\n",
-            "search_entity": "- 대화 중 등장한 객체/주제 정보는 'search_entity'\n",
-
-            # --- 법률 MCP: 단일 조회 (5개) ---
-            "search_law": "- 법령명으로 법령 검색 → mst/lawId 획득: 'search_law' (약칭 자동 인식: '화관법' → '화학물질관리법')\n",
-            "get_law_text": "- 특정 법령의 조문 본문: 'get_law_text' (jo='제74조' 한글 입력 가능, 또는 '007400' 6자리 코드)\n",
-            "get_annexes": "- 별표/서식(금액표·요율표·과태료 기준표·별지 양식): 'get_annexes'\n",
-            "search_decisions": "- 판례·헌재·조세심판·공정위·노동위·개보위·해석례 등 17개 도메인 통합 검색: 'search_decisions' (domain 파라미터로 도메인 지정)\n",
-            "get_decision_text": "- 결정례 전문: 'get_decision_text' (domain + id 필요. 긴 본문은 자동 축약, full=true로 전문)\n  ※ 판례는 'search_decisions(domain=\"precedent\", options={\"includeText\": true})'로 목록+상위 판례 본문을 한 번에 받을 수도 있음(2단계 생략)\n",
-
-            # --- 법률 MCP: 체인 도구 (8개) — 복합 리서치를 한 방에 ---
-            "chain_full_research": "- 종합 리서치(어디서 시작할지 모를 때): 'chain_full_research' — AI검색→법령→판례→해석례 자동 체이닝\n",
-            "chain_law_system": "- 법체계 분석(법률→시행령→시행규칙 3단 비교, 위임구조): 'chain_law_system' (scenario='delegation'/'impact'로 확장)\n",
-            "chain_action_basis": "- 처분/허가/과태료/벌칙 근거: 'chain_action_basis' (scenario='penalty'로 처분기준표+감경 행심+벌칙 종합 / scenario='action_plan'으로 '이럴 땐 이렇게' 5단계 안내: 상황진단→권리·구제→기관·기한→서류→주의)\n",
-            "chain_dispute_prep": "- 쟁송·불복·소송 대비: 'chain_dispute_prep' (판례+행심+전문결정례 병렬)\n",
-            "chain_amendment_track": "- 개정 이력 추적(신구대조, 연혁): 'chain_amendment_track' (scenario='timeline'로 판례·해석례 시계열 / scenario='time_travel'로 두 시점 본문 자동 diff: 예 '개인정보보호법 2020-01-01 vs 2025-11-01')\n",
-            "chain_ordinance_compare": "- 조례 비교(상위법 vs 자치법규): 'chain_ordinance_compare' (scenario='compliance'로 위헌·취소 사례 포함)\n",
-            "chain_procedure_detail": "- 절차/비용/서식 안내: 'chain_procedure_detail' (scenario='manual'로 공무원 처리 매뉴얼)\n",
-            "chain_document_review": "- 계약서·약관 리스크 분석: 'chain_document_review' (문서 텍스트 입력 시 자동 분류+리스크 탐지)\n",
-
-            # --- 법률 MCP: 킬러·검증·메타 (4개) ---
-            "verify_citations": "- ★답변 작성 후 조문/판례 인용 검증 필수: 'verify_citations' — 가짜 조문/없는 항 탐지 (예: '형법 제9999조' → ✗)\n",
-            "impact_map": "- 조문 하나의 파급효과 그래프: 'impact_map' — 특정 조문을 인용한 판례·헌재·해석례·행심·자치법규 역방향 탐색 + mermaid 그래프 (예: '민법 제103조 인용한 판례')\n",
-            "discover_tools": "- 노출된 17개로 부족할 때 전문 도구(용어·연혁·조약·학칙·공단규정 등 76개) 검색: 'discover_tools'\n",
-            "execute_tool": "- discover_tools로 찾은 전문 도구 실행: 'execute_tool' (toolName + params 전달)\n",
-        }
-        tool_prompt = "\n[도구 사용 지침]\n"
+        tool_prompt = "\n[로컬 도구]\n"
         for tool in available_tools:
-            line = prompt_map.get(tool.name)
+            line = LOCAL_TOOL_PROMPTS.get(tool.name)
             if line:
                 tool_prompt += line
+
+        mcp_available = [t for t in available_tools if t.name not in LOCAL_TOOL_NAMES]
+        if mcp_available:
+            tool_prompt += "\n[korean-law-mcp 법률 도구 — 각 도구 설명을 보고 상황에 맞게 선택]\n"
+            tool_prompt += build_mcp_tool_catalog(mcp_available) + "\n"
 
         tool_prompt += (
             "\n[법률 상담 권장 흐름]\n"
             "1) **사실관계 정리**: 사용자에게 부족한 정보가 있으면 짧게 되묻기 (장소/시점/당사자/금액 등)\n"
-            "2) **도구 선택 — 질문 복잡도에 맞춰**:\n"
-            "   • 단순 조회(특정 조문만): search_law → get_law_text\n"
-            "   • 판례 찾기: search_decisions(domain='precedent') → get_decision_text\n"
-            "   • **복합 사건(상황 → 법적 대응) → 체인 도구 1회 호출이 가장 효율적**\n"
-            "     - 처분/과태료/벌칙 근거 → chain_action_basis (일상 고민형 '이럴 땐?' → scenario='action_plan' 5단계 안내)\n"
-            "     - 절차·서식·비용 → chain_procedure_detail\n"
-            "     - 쟁송·불복 대비 → chain_dispute_prep\n"
-            "     - 조례 vs 상위법 → chain_ordinance_compare\n"
-            "     - 개정 이력 → chain_amendment_track (두 시점 본문 비교 → scenario='time_travel' 자동 diff)\n"
-            "     - 계약서/약관 리뷰 → chain_document_review\n"
-            "     - 법체계 파악 → chain_law_system\n"
-            "     - 어디서 시작할지 모를 때 → chain_full_research\n"
-            "   • 특정 조문의 파급효과(인용 판례·결정례·자치법규 관계망) → impact_map (mermaid 그래프 제공)\n"
-            "3) **인용 검증(필수)**: 답변 초안에 인용한 조문·항·판례번호를 verify_citations로 일괄 검증\n"
+            "2) **도구 선택 — 위 도구 설명을 참고해 질문 복잡도에 맞춰**:\n"
+            "   • 단순 조회(특정 조문): 법령 검색으로 식별자(mst/lawId) 확보 → 조문 본문 조회\n"
+            "   • 판례/결정례: 통합 결정례 검색 → 전문 조회\n"
+            "   • **복합 사건(상황→법적 대응): 'chain_'으로 시작하는 체인 도구 1회 호출이 가장 효율적**\n"
+            "     (처분/벌칙·절차/서식·쟁송·조례비교·개정이력·계약서검토·법체계 등 상황별 체인 제공)\n"
+            "   • 특정 조문의 파급효과(인용 판례·결정례·자치법규 관계망): 영향 그래프 도구\n"
+            "   • 노출 도구로 부족하면 전문 도구 탐색(discover) → 프록시 실행(execute) 도구 활용\n"
+            "3) **인용 검증(필수)**: 답변 초안에 인용한 조문·항·판례번호를 인용 검증 도구로 일괄 검증\n"
             "   → ✗(없는 조문) 또는 ⚠(불명확) 발견 시 답변에서 제거 또는 수정\n"
             "4) **답변 작성**: 일반인 언어 + 정확한 조문 번호/판례번호 + 면책 안내\n"
             "\n[자치법규 → 상위법령 Fallback]\n"
             "조례/규칙에서 못 찾으면 상위법령으로 우회 (예: 휴직/복무/징계 → 지방공무원법 제63조·제48조·제69조)\n"
             "\n[환각 방지 핵심]\n"
-            "- 조문 번호는 절대 추측 금지. get_law_text 결과만 인용.\n"
-            "- '제N조 제M항'을 인용할 때는 항 번호도 verify_citations로 확인 (없는 항을 만들지 말 것).\n"
-            "- 체인 도구 응답에 '[NOT_FOUND]' 또는 '[HALLUCINATION_DETECTED]' 마커가 있으면 해당 부분은 답변에서 제외.\n"
+            "- 조문 번호/판례는 절대 추측 금지. 법률 도구로 실제 조회한 결과만 인용.\n"
+            "- '제N조 제M항'을 인용할 때는 항 번호도 인용 검증 도구로 확인 (없는 항을 만들지 말 것).\n"
+            "- 도구 응답에 '[NOT_FOUND]' 또는 '[HALLUCINATION_DETECTED]' 마커가 있으면 해당 부분은 답변에서 제외.\n"
         )
         main_prompt += tool_prompt
 

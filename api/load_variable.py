@@ -146,5 +146,3 @@ class AgentState(TypedDict):
     entity_memory: Dict[str,Any]   # 매 턴마다 대화 내역에서 파악 가능한 객체에 대해 간단히 설명을 작성
     last_turn_entities: List[str]  # 직전 턴에서 update_entity가 추출/갱신한 엔티티 Key 목록 (save_conversation의 entity_keys payload에 사용)
     
-    # 판단 근거
-    data_reason: str
