@@ -5,6 +5,7 @@ from qdrant_client.models import PointStruct, VectorParams, Distance
 from datetime import datetime
 import uuid, json
 from langgraph.graph import StateGraph, END
+from api.chatbot.functions.llm_utils import resilient_ainvoke, is_empty_answer
 
 async def manage_turns(state: AgentState, config: RunnableConfig):
     print("--- 대화 턴 인덱스 추출 및 관리 시작 ---")
@@ -149,8 +150,7 @@ async def summary_turn(state: AgentState, config: RunnableConfig):
     if len(turns) > 3:
         # 모델 설정 (기본값 설정)
         model_name = config["configurable"].get("model", "gemini/gemini-2.5-flash-lite")
-        llm = MODEL_MANAGER.get_model(model_name)
-        
+
         # 요약 대상이 되는 0번 턴의 인덱스 추출
         start, end = turns[0]
         target_messages = messages[start : end + 1]
@@ -172,8 +172,17 @@ async def summary_turn(state: AgentState, config: RunnableConfig):
 
         [현재 대화 턴]
         """
-        # 3. LLM 호출 (시스템 프롬프트 + 대상 메시지들)
-        response = await llm.ainvoke([SystemMessage(content=prompt)] + target_messages)
+        # 3. LLM 호출 (메모리 요약은 best-effort: 실패/빈응답이면 이번 요약은 건너뜀)
+        try:
+            response = await resilient_ainvoke(
+                model_name, None, [SystemMessage(content=prompt)] + target_messages, max_retries=1,
+            )
+        except Exception as e:
+            print(f"--- turn 요약 skip (LLM 오류): {e} ---")
+            return {"turn_memory": turn_memory, "check_turn": check_turn}
+        if response is None or is_empty_answer(response):
+            print("--- turn 요약 skip (빈 응답) ---")
+            return {"turn_memory": turn_memory, "check_turn": check_turn}
         turn_summary = response.content.strip()
 
         # 4. 메모리에 추가 (이후 remove_messages 노드로 넘어가서 실제 인덱스/메시지 삭제 처리)
@@ -244,7 +253,6 @@ async def summary_short(state: AgentState, config: RunnableConfig):
         
         # 모델 설정
         model_name = config["configurable"].get("model", "gemini/gemini-2.5-flash-lite")
-        llm = MODEL_MANAGER.get_model(model_name)
 
         # 2. 요약 대상: 현재 turn_memory에 쌓인 모든 요약문들
         combined_turns = "\n\n".join([f"- {summary}" for summary in turn_memory])
@@ -262,8 +270,15 @@ async def summary_short(state: AgentState, config: RunnableConfig):
         {combined_turns}
         """
 
-        # 3. LLM 호출 및 결과 저장
-        response = await llm.ainvoke([SystemMessage(content=prompt)])
+        # 3. LLM 호출 및 결과 저장 (best-effort: 실패/빈응답이면 이번 단기요약은 건너뜀)
+        try:
+            response = await resilient_ainvoke(model_name, None, [SystemMessage(content=prompt)], max_retries=1)
+        except Exception as e:
+            print(f"--- short_memory 요약 skip (LLM 오류): {e} ---")
+            return {"short_memory": short_memory, "check_short": check_short, "check_turn": check_turn}
+        if response is None or is_empty_answer(response):
+            print("--- short_memory 요약 skip (빈 응답) ---")
+            return {"short_memory": short_memory, "check_short": check_short, "check_turn": check_turn}
         short_summary = response.content.strip()
 
         # 4. 상태 업데이트
@@ -295,7 +310,6 @@ async def summary_long(state: AgentState, config: RunnableConfig):
         
         # 모델 설정
         model_name = config["configurable"].get("model", "gemini/gemini-2.5-flash-lite")
-        llm = MODEL_MANAGER.get_model(model_name)
 
         # 2. 요약 대상: 기존 long_memory + 현재 short_memory 리스트
         combined_shorts = "\n\n".join([f"[단락 {i+1}]: {s}" for i, s in enumerate(short_memory)])
@@ -316,8 +330,15 @@ async def summary_long(state: AgentState, config: RunnableConfig):
         {combined_shorts}
         """
 
-        # 3. LLM 호출 및 장기 기억 갱신
-        response = await llm.ainvoke([SystemMessage(content=prompt)])
+        # 3. LLM 호출 및 장기 기억 갱신 (best-effort: 실패/빈응답이면 이번 장기요약은 건너뜀)
+        try:
+            response = await resilient_ainvoke(model_name, None, [SystemMessage(content=prompt)], max_retries=1)
+        except Exception as e:
+            print(f"--- long_memory 요약 skip (LLM 오류): {e} ---")
+            return {"long_memory": long_memory}
+        if response is None or is_empty_answer(response):
+            print("--- long_memory 요약 skip (빈 응답) ---")
+            return {"long_memory": long_memory}
         updated_long_memory = response.content.strip()
 
         print("장기 기억 통합 및 단기 기억 초기화 완료")
@@ -341,8 +362,7 @@ async def update_entity(state: AgentState, config: RunnableConfig):
     if not current_messages:
         return {}
 
-    model_name = config["configurable"].get("model", "gemini-2.5-flash-lite")
-    llm = MODEL_MANAGER.get_model(model_name)
+    model_name = config["configurable"].get("model", "gemini/gemini-2.5-flash-lite")
 
     # 기존 메모리 컨텍스트 (JSON 직렬화)
     memory_context = json.dumps(entity_memory, ensure_ascii=False, indent=2)
@@ -386,8 +406,18 @@ async def update_entity(state: AgentState, config: RunnableConfig):
 
     [최근 대화 흐름]
     """
-    response = await llm.ainvoke([SystemMessage(content=prompt)] + current_messages)
-    
+    # best-effort: 엔티티 추출 LLM이 실패/빈응답이면 기존 엔티티 메모리를 유지하고 건너뜀
+    try:
+        response = await resilient_ainvoke(
+            model_name, None, [SystemMessage(content=prompt)] + current_messages, max_retries=1,
+        )
+    except Exception as e:
+        print(f"--- 엔티티 업데이트 skip (LLM 오류): {e} ---")
+        return {"entity_memory": entity_memory, "last_turn_entities": []}
+    if response is None or is_empty_answer(response):
+        print("--- 엔티티 업데이트 skip (빈 응답) ---")
+        return {"entity_memory": entity_memory, "last_turn_entities": []}
+
     try:
         raw_content = response.content.strip().replace("```json", "").replace("```", "")
         suggested_entities = json.loads(raw_content)

@@ -1,12 +1,15 @@
 from langgraph.graph import StateGraph, END
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 from datetime import datetime
 
-from api.load_variable import MODEL_MANAGER, AgentState, LAW_TOOLS
+from api.load_variable import AgentState, LAW_TOOLS
 from langgraph.prebuilt import ToolNode, tools_condition
 from api.chatbot.functions.tools import web_search, page_crawl4ai, search_entity, search_history, search_memory
 from api.chatbot.functions.summary import memory_manager_graph
+from api.chatbot.functions.llm_utils import (
+    resilient_ainvoke, is_empty_answer, finish_reason_of, empty_answer_notice,
+)
 
 # === 도구 통합 ===
 # 로컬 도구(직접 정의) + korean-law-mcp 법률 도구.
@@ -95,9 +98,8 @@ async def general_chat(state: AgentState, config: RunnableConfig):
         if current_usage < get_tool_limit(tool.name):
             available_tools.append(tool)
 
-    # 2. 모델 로드
-    base_llm = MODEL_MANAGER.get_model(params.get("model", "gemini/gemini-2.5-flash-lite"))
-    llm_with_tools = base_llm.bind_tools(available_tools) if available_tools else base_llm
+    # 2. 사용할 모델명 결정 (실제 호출/바인딩은 하단 resilient_ainvoke에서 재시도·폴백과 함께 수행)
+    model_name = params.get("model", "gemini/gemini-2.5-flash-lite")
 
     # 3. 시간 정보
     client_iso = params.get("isotime")
@@ -122,6 +124,8 @@ async def general_chat(state: AgentState, config: RunnableConfig):
 - 법령/판례를 인용할 때는 반드시 korean-law-mcp 도구로 **실제 조회한 결과만** 사용하세요.
   LLM 자체 지식으로 조문 번호나 판례를 만들어내지 마세요(환각 위험).
 - 답변은 일반인이 이해할 수 있는 평이한 표현으로 작성하되, 법조문 인용은 정확한 조항/명칭을 유지하세요.
+- 법령·판례 원문을 길게 그대로 복사하지 말고, 조/항 번호와 짧은 요지만 인용한 뒤 핵심은 쉬운 말로 재서술하세요.
+  (원문을 장문 그대로 복붙하면 Gemini의 저작권 필터(RECITATION)에 걸려 응답이 통째로 차단될 수 있습니다.)
 - 답변 말미에 "본 답변은 일반 정보 제공 목적이며, 구체 사건은 변호사 상담이 필요합니다." 류의 안내를 포함하세요.
 - 사용자가 법률 외 질문을 하면 자연스럽게 응대하되, 본분(법률 상담)으로 부드럽게 유도하세요.
 """
@@ -177,8 +181,14 @@ async def general_chat(state: AgentState, config: RunnableConfig):
     summary_message = SystemMessage(content=summary_content)
     final_prompt = [system_prompt, summary_message] + state["messages"]
 
-    # 7. 모델 호출
-    response = await llm_with_tools.ainvoke(final_prompt)
+    # 7. 모델 호출 — 일시 오류(503/429/500) 자동 재시도 + 빈 응답 시 폴백 모델 순차 시도
+    response = await resilient_ainvoke(model_name, available_tools, final_prompt)
+
+    # 빈 응답(RECITATION/SAFETY 또는 모든 폴백 실패) → 사용자 안내 메시지로 대체
+    if response is None or is_empty_answer(response):
+        fr = finish_reason_of(response) if response is not None else "no_response"
+        print(f"--- 최종 답변이 비어 안내 메시지로 대체 (finish_reason={fr}) ---")
+        response = AIMessage(content=empty_answer_notice(fr))
 
     return {"messages": [response]}
 
@@ -198,6 +208,21 @@ async def update_tool_counts(state: AgentState):
 
     return {"tool_counts": all_counts}
 
+
+async def memory_manager_safe(state: AgentState, config: RunnableConfig):
+    """
+    메모리 관리 서브그래프의 best-effort 래퍼.
+    메모리 갱신(요약/엔티티/Qdrant 저장)은 '부차적' 작업이므로, 여기서 어떤 예외가 나도
+    (예: LLM 503, 임베딩 오류) 삼켜서 이미 생성된 사용자 답변이 유실되지 않게 한다.
+    → 답변 노드가 성공했다면 메모리가 실패해도 요청은 500이 아니라 정상 응답으로 끝난다.
+    """
+    try:
+        return await memory_manager_graph.ainvoke(state, config)
+    except Exception as e:
+        print(f"[memory_manager] 실패 — 메모리 갱신 건너뜀(답변은 유지): {type(e).__name__}: {e}")
+        return {}
+
+
 # --- 그래프 구성 ---
 workflow = StateGraph(AgentState)
 
@@ -205,7 +230,7 @@ workflow = StateGraph(AgentState)
 workflow.add_node("general_chat", general_chat)
 workflow.add_node("update_tool_counts", update_tool_counts)
 workflow.add_node("tool_node", tool_node)
-workflow.add_node("memory_manager", memory_manager_graph)
+workflow.add_node("memory_manager", memory_manager_safe)
 
 # 진입점 설정
 workflow.set_entry_point("general_chat")
