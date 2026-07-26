@@ -121,21 +121,26 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
 def merge_dict(existing: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """기존 딕셔너리에 새로운 딕셔너리 값을 병합 (부분 업데이트)"""
+    """기존 딕셔너리에 새로운 딕셔너리 값을 병합 (부분 업데이트 및 딥 머지)"""
     if existing is None:
         return new or {}
     if new is None:
         return existing
     
-    # 기존 데이터를 복사한 뒤 새로운 데이터로 업데이트
-    return {**existing, **new}
+    res = dict(existing)
+    for k, v in new.items():
+        if isinstance(v, dict) and isinstance(res.get(k), dict):
+            res[k] = {**res[k], **v}
+        else:
+            res[k] = v
+    return res
 
 class AgentState(TypedDict):
     # 대화 내역 저장 및 관리하는 부분
     messages: Annotated[List[BaseMessage], add_messages]
     conversation_turns: List[List[int]]      # 사용자 메세지와 AI 메세지의 인덱스 값 저장하는 부분 (ToolMessage 걸러보기 위함)
     current_turn: int                        # 현재 대화의 턴 (entity_memory 관리를 위함)
-    tool_counts: Dict[str, Dict[str, int]]   # 노드별 툴 사용 횟수 체크
+    tool_counts: Annotated[Dict[str, Dict[str, int]], merge_dict]   # 노드별 툴 사용 횟수 체크
     
     # 전체적인 대화 메모리 관리를 위한 상태 값
     turn_memory: List[str]         # 하나의 대화쌍(turn)을 요약
@@ -143,6 +148,11 @@ class AgentState(TypedDict):
     short_memory: List[str]        # 10개의 대화쌍(turn)을 7번의 주기마다 요약
     check_short: int               # short_memory를 몇번 업데이트 했는지 확인 (4번이 되면 long_memory 업데이트 및 초기화)
     long_memory: Optional[str]     # 전체 대화 메세지에 대해 short_memory가 4개 사라질 때마다 요약
-    entity_memory: Dict[str,Any]   # 매 턴마다 대화 내역에서 파악 가능한 객체에 대해 간단히 설명을 작성
+    entity_memory: Annotated[Dict[str, Any], merge_dict]   # 매 턴마다 대화 내역에서 파악 가능한 객체에 대해 간단히 설명을 작성
     last_turn_entities: List[str]  # 직전 턴에서 update_entity가 추출/갱신한 엔티티 Key 목록 (save_conversation의 entity_keys payload에 사용)
+    
+    # 노드 분리 관련 상태 값
+    is_law_related: Optional[bool]  # 법률 관련 메시지 여부 (True/False)
+    law_search_count: Optional[int] # 법률 검색 노드 실행 횟수 (최대 5회)
+
     
