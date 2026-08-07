@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse
 import uvicorn
 from langgraph.checkpoint.memory import MemorySaver
 from api import api_router
+from api.db import close_pool, init_pool
 from api.chatbot.functions.agent import build_chatbot_agent
 from api.chatbot.functions.summary import ensure_conversation_history_collection
 
@@ -29,16 +30,20 @@ dotenv.load_dotenv()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ───── startup ─────
-    # DB 의존성 제거: in-memory 체크포인터(MemorySaver)로 LangGraph 에이전트 compile
+    # 저장소 3종 준비
+    #  - Postgres : 사용자에게 보여줄 세션/메시지 원문 (진실 원본)
+    #  - Qdrant   : AI가 과거 대화를 의미 검색하기 위한 벡터 (1턴 = 1 point)
+    #  - MemorySaver : LangGraph 실행 상태 (같은 thread_id 내 multi-turn 유지, 서버 재시작 시 휘발)
+    await init_pool()
     await ensure_conversation_history_collection()
-    # 같은 thread_id 내에서 multi-turn 유지는 되지만 서버 재시작 시 휘발됨 (테스트용).
     checkpointer = MemorySaver()
     app.state.chatbot_agent = build_chatbot_agent(checkpointer)
 
     yield   # ──── 앱 동작 ────
 
     # ───── shutdown ─────
-    # 외부 리소스 핸들 없음 (MemorySaver는 GC에 맡김)
+    # MemorySaver는 GC에 맡기고, Postgres 풀만 명시적으로 닫는다.
+    await close_pool()
 
 # --- FastAPI 앱 초기화 ---
 app = FastAPI(

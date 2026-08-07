@@ -20,6 +20,8 @@ dependencies = [
     "langchain-litellm>=0.2.0",
     # --- 벡터 DB ---
     "qdrant-client>=1.17.1",
+    # --- 관계형 DB (세션/메시지 원문 저장) ---
+    "asyncpg>=0.30.0",
     # --- 웹 크롤링 (page_crawl4ai 도구) ---
     "crawl4ai>=0.8.5",
     # --- 유틸 ---

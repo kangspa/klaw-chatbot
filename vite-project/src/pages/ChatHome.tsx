@@ -14,11 +14,15 @@ export default function ChatHome() {
   const { createNew } = useSessions()
   const navigate = useNavigate()
 
-  const start = (seed?: string) => {
-    const s = createNew()
-    if (!s) return
-    // 예시 질문을 클릭했다면 새 세션으로 이동하며 초기 입력을 함께 전달
-    navigate(`/chat/${s.id}`, { state: seed ? { seed } : undefined })
+  const start = async (seed?: string) => {
+    try {
+      const s = await createNew()
+      if (!s) return
+      // 예시 질문을 클릭했다면 새 세션으로 이동하며 초기 입력을 함께 전달
+      navigate(`/chat/${s.id}`, { state: seed ? { seed } : undefined })
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '세션을 만들지 못했습니다.')
+    }
   }
 
   return (

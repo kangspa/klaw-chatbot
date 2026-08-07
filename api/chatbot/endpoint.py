@@ -1,82 +1,20 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional, Any
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 
 # CHATBOT_AGENT는 main.py의 lifespan startup에서 compile되어
-# request.app.state.chatbot_agent에 저장된다 (AsyncPostgresSaver가 이벤트 루프 필요).
-from langchain_core.callbacks import BaseCallbackHandler
-
-import threading
-import traceback
-import litellm
-from langchain_core.outputs import LLMResult, ChatGeneration
-
-
-class LiteLLMCostCallback(BaseCallbackHandler):
-    """
-    LiteLLM 내장 가격표(litellm.cost_per_token)를 사용해 호출별 비용을 누적.
-    OpenAI / Anthropic / Gemini / Ollama / HuggingFace 등 LiteLLM이 지원하는
-    모든 모델의 비용을 자동 계산 (Gemini 200K 임계 등 티어 가격도 LiteLLM 측에서 처리).
-
-    각 LLM 호출이 끝날 때 AIMessage.usage_metadata에서 토큰 수,
-    response_metadata에서 모델명을 추출해 비용으로 환산.
-    """
-
-    def __init__(self, default_model: Optional[str] = None) -> None:
-        super().__init__()
-        self._lock = threading.Lock()
-        self.default_model = default_model  # response_metadata에 model이 없을 때 폴백
-        self.total_input = 0
-        self.total_output = 0
-        self.total_cost = 0.0
-        self.per_call: list[dict[str, Any]] = []
-
-    @staticmethod
-    def _resolve_model(msg: AIMessage, fallback: Optional[str]) -> Optional[str]:
-        # ChatLiteLLM은 response_metadata에 'model_name' 또는 'model'을 넣음 (구현/버전 차이)
-        meta = msg.response_metadata or {}
-        return meta.get("model_name") or meta.get("model") or fallback
-
-    def on_llm_end(self, response: LLMResult, **kwargs) -> None:
-        try:
-            generation = response.generations[0][0]
-        except IndexError:
-            return
-        if not isinstance(generation, ChatGeneration):
-            return
-        msg = generation.message
-        if not isinstance(msg, AIMessage) or not msg.usage_metadata:
-            return
-
-        input_tokens = msg.usage_metadata.get("input_tokens", 0)
-        output_tokens = msg.usage_metadata.get("output_tokens", 0)
-        model_name = self._resolve_model(msg, self.default_model) or "unknown"
-
-        cost = 0.0
-        try:
-            prompt_cost, completion_cost = litellm.cost_per_token(
-                model=model_name,
-                prompt_tokens=input_tokens,
-                completion_tokens=output_tokens,
-            )
-            cost = float(prompt_cost) + float(completion_cost)
-        except Exception as e:
-            # 모델이 LiteLLM 가격 DB에 없거나 모델명 형식이 달라 매칭 실패한 경우
-            print(f"[cost] '{model_name}' 비용 계산 실패: {e}")
-
-        with self._lock:
-            self.total_input += input_tokens
-            self.total_output += output_tokens
-            self.total_cost += cost
-            self.per_call.append({
-                "model": model_name,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "cost_usd": cost,
-            })
+# request.app.state.chatbot_agent에 저장된다 (체크포인터가 이벤트 루프 필요).
+from api.chatbot.functions import session_store
+from api.chatbot.functions.chat_runner import (
+    LiteLLMCostCallback,  # noqa: F401  (기존 import 경로 호환용 재노출)
+    describe_exception,
+    run_agent_turn,
+)
+from api.db import is_ready as db_is_ready
 
 router = APIRouter()
+
 
 class PlanChatRequest(BaseModel):
     userId: str = Field(..., description="사용자 ID")
@@ -93,90 +31,115 @@ class PlanChatRequest(BaseModel):
         ),
     )
 
+
 class PlanChatResponse(BaseModel):
     response: str = Field(..., description="AI 응답 메시지")
+    turnId: Optional[str] = Field(default=None, description="이번 턴의 turn_id (= Qdrant point id)")
+    userMessage: Optional[dict[str, Any]] = Field(default=None, description="Postgres에 저장된 사용자 메시지 행")
+    assistantMessage: Optional[dict[str, Any]] = Field(default=None, description="Postgres에 저장된 AI 메시지 행")
+    session: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="갱신된 세션 행. 첫 메시지로 제목이 자동 생성되므로 프론트가 이 값으로 목록을 동기화한다.",
+    )
+
 
 @router.post("/chat", response_model=PlanChatResponse)
 async def post_plan_chat(data: PlanChatRequest, request: Request):
     """
-    영상 기획 단계(Plan)에서 사용자와 대화를 나누며 기획 포맷을 채우기 위한 End-point
+    사용자 메시지를 받아 에이전트를 1턴 실행하고, 결과를 세 저장소에 함께 기록하는 End-point
+
+      - Postgres : 화면에 보여줄 대화 원문 (user/assistant 메시지 2행, 같은 turn_id)
+      - Qdrant   : 의미 검색용 벡터 (turn_id를 point id로 사용, 1턴 = 1 point)
+      - LangGraph: 실행 상태(체크포인트)
     """
     # lifespan에서 compile된 에이전트를 app.state에서 꺼내 사용
     chatbot_agent = request.app.state.chatbot_agent
 
-    # thread_id 구성 (사용자별, 세션별로 상태가 유지되도록 함)
-    # 클라이언트가 보낸 세션 ID를 thread_id로 그대로 사용 (세션 단위로 대화 상태 격리)
-    config = {
-        "configurable": {
-            "user_id": data.userId,
-            "thread_id": data.sessionId,
-            "isotime": data.isotime,
-            "model": data.model,
-        }
-    }
+    # 이번 턴의 식별자들을 미리 만들어둔다.
+    #  - turn_id: Qdrant point id 이자 Postgres의 turn 키
+    #  - *_message_id: Postgres PK 이자 LangGraph state의 message id
+    turn_id = session_store.new_id()
+    user_message_id = session_store.new_id()
+    assistant_message_id = session_store.new_id()
 
-    # 사용자 입력을 HumanMessage 형식으로 변환
-    input_message = HumanMessage(content=data.message)
+    # 세션 보장 (프론트가 만들기 전에 /chat이 먼저 도달해도 동작하도록)
+    if db_is_ready():
+        try:
+            await session_store.ensure_session(data.sessionId, data.userId)
+        except Exception as e:
+            print(f"[Postgres] 세션 보장 실패(계속 진행): {type(e).__name__}: {e}")
 
     try:
-        # CHATBOT_AGENT를 통해 대화 진행
-        # compile 시 checkpointer가 설정되어 있어 thread_id를 기반으로 이전 상태를 자동으로 불러옴
-        cb = LiteLLMCostCallback(default_model=data.model)
-        result = await chatbot_agent.ainvoke(
-            {"messages": [input_message]},
-            # 기존 configurable 유지 + callbacks 추가
-            config={**config, "callbacks": [cb]},
+        answer, ai_graph_id = await run_agent_turn(
+            chatbot_agent,
+            user_id=data.userId,
+            session_id=data.sessionId,
+            isotime=data.isotime,
+            message=data.message,
+            model=data.model,
+            turn_id=turn_id,
+            user_graph_message_id=user_message_id,
         )
-        print(f"Per-call breakdown: {cb.per_call}")
-        print(f"Total Input: {cb.total_input} / Output: {cb.total_output}")
-        print(f"Estimated cost: ${cb.total_cost:.6f}")
-
-        # 결과에서 마지막 AI 메시지 추출
-        messages = result.get("messages", [])
-        last_ai_message = ""
-        if messages:
-            for msg in reversed(messages):
-                if isinstance(msg, AIMessage):
-                    last_ai_message = msg.content
-                    break
-
-        return PlanChatResponse(
-            response=last_ai_message,
-        )
-
     except Exception as e:
-        # 일부 MCP/RPC 예외는 str(e)가 비어있어 단순 print로는 원인 추적이 불가능
-        # → 예외 타입과 전체 traceback을 함께 로깅
-        err_type = type(e).__name__
-        err_repr = repr(e)
-        tb_str = traceback.format_exc()
-        print(f"PLAN Chat Error [{err_type}]: {err_repr}")
-        print(tb_str)
-        raise HTTPException(
-            status_code=500,
-            detail=f"에이전트 호출 중 오류가 발생했습니다: [{err_type}] {err_repr}"
-        )
+        detail = describe_exception(e)
+        raise HTTPException(status_code=500, detail=f"에이전트 호출 중 오류가 발생했습니다: {detail}")
+
+    # Postgres 기록 (실패해도 이미 생성된 답변은 그대로 반환한다)
+    saved: dict[str, Any] = {}
+    if db_is_ready():
+        try:
+            saved = await session_store.append_turn(
+                session_id=data.sessionId,
+                turn_id=turn_id,
+                user_message_id=user_message_id,
+                user_content=data.message,
+                user_graph_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+                assistant_content=answer,
+                assistant_graph_id=ai_graph_id,
+                model=data.model,
+            )
+        except Exception as e:
+            print(f"[Postgres] 대화 저장 실패(무시): {type(e).__name__}: {e}")
+
+    return PlanChatResponse(
+        response=answer,
+        turnId=turn_id,
+        userMessage=saved.get("userMessage"),
+        assistantMessage=saved.get("assistantMessage"),
+        session=saved.get("session"),
+    )
+
 
 @router.get("/{sessionId}/history")
 async def get_draft_history(sessionId: str, request: Request):
     """
-    특정 세션의 대화 기록을 조회하는 End-point
+    특정 세션의 대화 기록을 조회하는 End-point.
+
+    Postgres가 준비되어 있으면 그쪽(사용자에게 보여줄 원문)을 우선 사용하고,
+    없을 때만 LangGraph 체크포인트에서 읽는다.
     """
+    if db_is_ready():
+        try:
+            messages = await session_store.list_messages(sessionId)
+            if messages:
+                return {"messages": [{"role": m["role"], "content": m["content"]} for m in messages]}
+        except Exception as e:
+            print(f"[Postgres] 히스토리 조회 실패(체크포인터로 폴백): {type(e).__name__}: {e}")
+
     chatbot_agent = request.app.state.chatbot_agent
     config = {"configurable": {"thread_id": sessionId}}
 
     try:
-        # 현재 상태 조회 (AsyncPostgresSaver는 aget_state로 비동기 호출)
         state = await chatbot_agent.aget_state(config)
         if not state or not state.values:
-            return { "messages": [] }
-        
-        values = state.values
+            return {"messages": []}
+
         messages = []
-        for msg in values.get("messages", []):
+        for msg in state.values.get("messages", []):
             role = "user" if isinstance(msg, HumanMessage) else "assistant"
             messages.append({"role": role, "content": msg.content})
-            
-        return { "messages": messages }
+
+        return {"messages": messages}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

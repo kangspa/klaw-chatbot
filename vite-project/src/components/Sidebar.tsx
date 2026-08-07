@@ -1,7 +1,8 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import { useCallback, useState } from 'react'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useSessions } from '../context/SessionsContext'
-import { formatWhen } from '../services/time'
+import SessionItem from './SessionItem'
 
 interface SidebarProps {
   onNavigate?: () => void  // 모바일에서 항목 클릭 시 사이드바 닫기
@@ -9,25 +10,33 @@ interface SidebarProps {
 
 export default function Sidebar({ onNavigate }: SidebarProps) {
   const { user, logout } = useAuth()
-  const { sessions, createNew, remove } = useSessions()
+  const { sessions, error, createNew, remove, rename } = useSessions()
   const navigate = useNavigate()
+  const location = useLocation()
 
-  const handleNewSession = () => {
-    const s = createNew()
-    if (s) {
-      onNavigate?.()
-      navigate(`/chat/${s.id}`)
+  // 한 번에 하나의 세션 메뉴만 열리도록 사이드바에서 관리
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
+
+  const handleNewSession = async () => {
+    try {
+      const s = await createNew()
+      if (s) {
+        onNavigate?.()
+        navigate(`/chat/${s.id}`)
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '세션을 만들지 못했습니다.')
     }
   }
 
-  const handleDelete = (e: React.MouseEvent, id: string) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (confirm('이 세션을 삭제할까요? 대화 내용이 사라집니다.')) {
-      remove(id)
-      navigate('/chat')
-    }
-  }
+  const handleDelete = useCallback(
+    async (id: string) => {
+      await remove(id)
+      // 지금 보고 있던 세션을 지웠다면 홈으로 빠져나온다
+      if (location.pathname === `/chat/${id}`) navigate('/chat')
+    },
+    [remove, navigate, location.pathname],
+  )
 
   return (
     <aside className="sidebar">
@@ -54,29 +63,20 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
       <div className="sidebar__list-head">세션 목록</div>
       <nav className="sidebar__list">
-        {sessions.length === 0 && (
+        {error && <p className="sidebar__empty sidebar__empty--error">{error}</p>}
+        {!error && sessions.length === 0 && (
           <p className="sidebar__empty">아직 세션이 없습니다.<br />‘새 세션’으로 시작해보세요.</p>
         )}
         {sessions.map((s) => (
-          <NavLink
+          <SessionItem
             key={s.id}
-            to={`/chat/${s.id}`}
-            className={({ isActive }) => `session-item${isActive ? ' is-active' : ''}`}
-            onClick={onNavigate}
-          >
-            <span className="session-item__body">
-              <span className="session-item__title">{s.title}</span>
-              <span className="session-item__meta">{formatWhen(s.updatedAt)}</span>
-            </span>
-            <button
-              className="session-item__delete"
-              title="세션 삭제"
-              aria-label="세션 삭제"
-              onClick={(e) => handleDelete(e, s.id)}
-            >
-              ×
-            </button>
-          </NavLink>
+            session={s}
+            menuOpen={menuOpenId === s.id}
+            onToggleMenu={(open) => setMenuOpenId(open ? s.id : null)}
+            onRename={(title) => rename(s.id, title)}
+            onDelete={() => handleDelete(s.id)}
+            onNavigate={onNavigate}
+          />
         ))}
       </nav>
 

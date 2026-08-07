@@ -4,7 +4,7 @@ import { toSummary } from '../services/sessions'
 import { formatWhen } from '../services/time'
 
 export default function HistoryPage() {
-  const { sessions } = useSessions()
+  const { sessions, loading, error } = useSessions()
   const summaries = sessions.map(toSummary) // sessions는 이미 최신순 정렬
 
   return (
@@ -14,17 +14,24 @@ export default function HistoryPage() {
         <p className="history__desc">세션별로 정리된 상담 요약입니다. 카드를 눌러 이어서 대화하세요.</p>
       </header>
 
-      {summaries.length === 0 ? (
+      {error ? (
         <div className="history__empty">
-          <p>아직 저장된 대화가 없습니다.</p>
-          <Link className="btn btn--primary" to="/chat">새 세션 시작</Link>
+          <p>{error}</p>
+        </div>
+      ) : summaries.length === 0 ? (
+        <div className="history__empty">
+          <p>{loading ? '불러오는 중…' : '아직 저장된 대화가 없습니다.'}</p>
+          {!loading && <Link className="btn btn--primary" to="/chat">새 세션 시작</Link>}
         </div>
       ) : (
         <div className="history__grid">
           {summaries.map((s) => (
             <Link key={s.id} to={`/chat/${s.id}`} className="summary-card">
               <div className="summary-card__top">
-                <h2 className="summary-card__title">{s.title}</h2>
+                <h2 className="summary-card__title">
+                  {s.isBranch && <span className="summary-card__branch" title="브랜치로 만들어진 세션">⑂ 분기</span>}
+                  {s.title}
+                </h2>
                 <span className="summary-card__count">{s.messageCount}개 메시지</span>
               </div>
 

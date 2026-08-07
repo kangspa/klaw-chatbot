@@ -1,11 +1,11 @@
+import type { ChatMessage, Session } from '../types'
+import { apiFetch } from './http'
 import { localIsoWithOffset } from './time'
 
 /**
- * 실제 FastAPI 백엔드(korean-law 챗봇) 연동.
- * 개발 중에는 vite.config.ts의 proxy가 /chatbot/* → http://localhost:8008 로 전달한다.
- * 배포 시 다른 오리진을 쓰려면 VITE_API_BASE 환경변수로 override.
+ * 챗봇 대화 턴 전송/조회.
+ * 세션·메시지 CRUD와 삭제/브랜치/재생성은 services/sessions.ts에 있다.
  */
-const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 
 export const DEFAULT_MODEL = 'gemini/gemini-2.5-flash-lite'
 
@@ -16,15 +16,35 @@ export interface ChatRequest {
   model?: string
 }
 
-interface ChatResponsePayload {
+export interface ChatResult {
+  /** AI 응답 텍스트 */
   response: string
+  /** 이번 턴의 turn_id (= Qdrant point id) */
+  turnId: string | null
+  /** Postgres에 저장된 사용자 메시지 행 (id·seq 포함) */
+  userMessage: ChatMessage | null
+  /** Postgres에 저장된 AI 메시지 행 */
+  assistantMessage: ChatMessage | null
+  /**
+   * 갱신된 세션 행. 첫 메시지를 보내면 백엔드가 그 내용으로 제목을 자동 생성하므로,
+   * 이 값을 반영해야 사이드바 제목이 '새 대화'에 머무르지 않는다.
+   */
+  session: Session | null
 }
 
-/** POST /chatbot/chat — 사용자 메시지를 보내고 AI 답변 문자열을 받는다. */
-export async function sendChat(req: ChatRequest): Promise<string> {
-  const res = await fetch(`${API_BASE}/chatbot/chat`, {
+/**
+ * POST /chatbot/chat — 사용자 메시지를 보내고 AI 답변을 받는다.
+ * 백엔드가 같은 요청 안에서 Postgres 2행 + Qdrant 1 point + LangGraph 상태를 함께 기록한다.
+ */
+export async function sendChat(req: ChatRequest): Promise<ChatResult> {
+  const data = await apiFetch<{
+    response: string
+    turnId?: string | null
+    userMessage?: ChatMessage | null
+    assistantMessage?: ChatMessage | null
+    session?: Session | null
+  }>('/chatbot/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       userId: req.userId,
       sessionId: req.sessionId,
@@ -34,19 +54,13 @@ export async function sendChat(req: ChatRequest): Promise<string> {
     }),
   })
 
-  if (!res.ok) {
-    let detail = `요청 실패 (HTTP ${res.status})`
-    try {
-      const body = await res.json()
-      if (body?.detail) detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail)
-    } catch {
-      /* JSON 파싱 실패는 무시하고 기본 메시지 사용 */
-    }
-    throw new Error(detail)
+  return {
+    response: data.response,
+    turnId: data.turnId ?? null,
+    userMessage: data.userMessage ?? null,
+    assistantMessage: data.assistantMessage ?? null,
+    session: data.session ?? null,
   }
-
-  const data = (await res.json()) as ChatResponsePayload
-  return data.response
 }
 
 export interface ServerHistoryMessage {
@@ -54,12 +68,12 @@ export interface ServerHistoryMessage {
   content: string
 }
 
-/** GET /chatbot/{sessionId}/history — 서버 체크포인터에 남은 대화 기록(있으면). */
+/** GET /chatbot/{sessionId}/history — 세션의 대화 기록(Postgres 우선, 없으면 체크포인터). */
 export async function fetchHistory(sessionId: string): Promise<ServerHistoryMessage[]> {
-  const res = await fetch(`${API_BASE}/chatbot/${encodeURIComponent(sessionId)}/history`)
-  if (!res.ok) return []
   try {
-    const data = (await res.json()) as { messages?: ServerHistoryMessage[] }
+    const data = await apiFetch<{ messages?: ServerHistoryMessage[] }>(
+      `/chatbot/${encodeURIComponent(sessionId)}/history`,
+    )
     return data.messages ?? []
   } catch {
     return []

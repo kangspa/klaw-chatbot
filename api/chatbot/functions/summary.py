@@ -103,8 +103,14 @@ async def save_conversation(state: AgentState, config: RunnableConfig):
     # 5. 이번 턴에 update_entity가 추출/갱신한 엔티티 키 (payload 필터용)
     entity_keys = state.get("last_turn_entities", []) or []
 
+    # 6. point id = turn_id
+    #    엔드포인트가 이번 턴의 turn_id(UUID)를 config로 내려준다. Postgres chat_messages.turn_id와
+    #    같은 값이므로 삭제/브랜치/재생성이 Postgres와 Qdrant에서 동일한 범위로 적용된다.
+    #    특히 '다시 실행'은 같은 turn_id로 upsert되어 기존 point를 그대로 덮어쓴다.
+    point_id = params.get("turn_id") or str(uuid.uuid4())
+
     try:
-        # 6. 3개 벡터를 배치 임베딩 (호출 1회로 처리하여 비용/지연 최소화)
+        # 7. 3개 벡터를 배치 임베딩 (호출 1회로 처리하여 비용/지연 최소화)
         vectors = await GEMINI_EMBEDDINGS.aembed_documents(
             [combined_text, user_content, ai_content]
         )
@@ -114,7 +120,7 @@ async def save_conversation(state: AgentState, config: RunnableConfig):
             collection_name=collection_name,
             points=[
                 PointStruct(
-                    id=str(uuid.uuid4()),
+                    id=point_id,
                     vector={
                         "combined": combined_vec,
                         "query": query_vec,
@@ -132,7 +138,7 @@ async def save_conversation(state: AgentState, config: RunnableConfig):
                 )
             ]
         )
-        print(f"Qdrant 저장 성공 (User: {user_id}, Entities: {entity_keys})")
+        print(f"Qdrant 저장 성공 (User: {user_id}, Turn: {point_id}, Entities: {entity_keys})")
     except Exception as e:
         print(f"Qdrant 저장 중 오류 발생: {e}")
 
