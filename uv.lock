@@ -1224,6 +1224,7 @@ dependencies = [
     { name = "langgraph" },
     { name = "litellm" },
     { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "qdrant-client" },
     { name = "uvicorn" },
 ]
@@ -1242,6 +1243,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=1.0.10" },
     { name = "litellm", specifier = ">=1.52.0" },
     { name = "pydantic", specifier = ">=2.10.0" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10.0" },
     { name = "qdrant-client", specifier = ">=1.17.1" },
     { name = "uvicorn", specifier = ">=0.41.0" },
 ]

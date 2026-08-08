@@ -77,7 +77,7 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
     let alive = true
     const startedAt = mutationRef.current
     const load = ownerId
-      ? sessionService.listSessions(ownerId)
+      ? sessionService.listSessions()
       : Promise.resolve<Session[]>([])
 
     load.then(
@@ -106,7 +106,7 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
       return
     }
     try {
-      const list = await sessionService.listSessions(ownerId)
+      const list = await sessionService.listSessions()
       setSessions((prev) => mergeWithLocal(list, prev).filter((s) => list.some((x) => x.id === s.id)))
       setLoadedOwner(ownerId)
       setError(null)
@@ -123,7 +123,7 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
       refresh,
       createNew: async (title) => {
         if (!ownerId) return null
-        const s = await sessionService.createSession(ownerId, title)
+        const s = await sessionService.createSession(title)
         bumpMutation()
         setSessions((prev) => [{ ...s, messages: s.messages ?? [] }, ...prev])
         return s

@@ -14,27 +14,24 @@ chat_messages.graph_message_id (= LangGraph state 상의 message id)다.
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from api.auth.deps import get_current_user
 from api.chatbot.functions import graph_ops, qdrant_ops, session_store
 from api.chatbot.functions.chat_runner import describe_exception, run_agent_turn
-from api.db import is_ready as db_is_ready
 
-router = APIRouter(prefix="/sessions")
-
-
-def _require_db() -> None:
-    if not db_is_ready():
-        raise HTTPException(
-            status_code=503,
-            detail="Postgres에 연결되어 있지 않습니다. `docker compose up -d postgres` 후 서버를 다시 시작하세요.",
-        )
+# 이 라우터의 모든 경로는 로그인 필수. 사용자 id는 요청 파라미터가 아니라 Bearer 토큰에서 가져온다.
+router = APIRouter(prefix="/sessions", dependencies=[Depends(get_current_user)])
 
 
-async def _load_session(session_id: str) -> dict[str, Any]:
+async def _load_session(session_id: str, owner_id: str) -> dict[str, Any]:
+    """
+    세션을 읽고 소유권까지 확인한다.
+    남의 세션은 '권한 없음'이 아니라 404로 응답한다 — 세션 id의 존재 여부 자체를 노출하지 않기 위함.
+    """
     session = await session_store.get_session(session_id)
-    if not session:
+    if not session or session["ownerId"] != owner_id:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
     return session
 
@@ -49,7 +46,6 @@ async def _load_message(session_id: str, message_id: str) -> dict[str, Any]:
 # ────────────────────────── 세션 CRUD ──────────────────────────
 
 class CreateSessionRequest(BaseModel):
-    userId: str = Field(..., description="세션 소유자 ID")
     title: Optional[str] = Field(default=None, description="세션 제목 (미지정 시 '새 대화')")
 
 
@@ -58,24 +54,28 @@ class RenameSessionRequest(BaseModel):
 
 
 @router.get("")
-async def list_sessions(userId: str = Query(..., description="세션 소유자 ID")):
-    """사용자의 세션 목록 (메시지 포함, 최근 활동순)."""
-    _require_db()
-    return {"sessions": await session_store.list_sessions_with_messages(userId)}
+async def list_sessions(current_user: dict[str, Any] = Depends(get_current_user)):
+    """로그인한 회원의 세션 목록 (메시지 포함, 최근 활동순)."""
+    return {"sessions": await session_store.list_sessions_with_messages(current_user["id"])}
 
 
 @router.post("", status_code=201)
-async def create_session(data: CreateSessionRequest):
+async def create_session(
+    data: CreateSessionRequest,
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
     """새 세션 생성. 반환된 id가 그대로 LangGraph thread_id / Qdrant thread_id로 쓰인다."""
-    _require_db()
-    session = await session_store.create_session(data.userId, data.title)
+    session = await session_store.create_session(current_user["id"], data.title)
     session["messages"] = []
     return session
 
 
 @router.get("/{sessionId}")
-async def get_session(sessionId: str):
-    _require_db()
+async def get_session(
+    sessionId: str,
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
+    await _load_session(sessionId, current_user["id"])
     session = await session_store.get_session_with_messages(sessionId)
     if not session:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
@@ -83,8 +83,12 @@ async def get_session(sessionId: str):
 
 
 @router.patch("/{sessionId}")
-async def rename_session(sessionId: str, data: RenameSessionRequest):
-    _require_db()
+async def rename_session(
+    sessionId: str,
+    data: RenameSessionRequest,
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
+    await _load_session(sessionId, current_user["id"])
     title = data.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="제목은 비워둘 수 없습니다.")
@@ -95,10 +99,13 @@ async def rename_session(sessionId: str, data: RenameSessionRequest):
 
 
 @router.delete("/{sessionId}")
-async def delete_session(sessionId: str, request: Request):
+async def delete_session(
+    sessionId: str,
+    request: Request,
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
     """세션 삭제: Postgres 행 + Qdrant의 해당 thread 벡터 전체 + LangGraph state를 모두 정리."""
-    _require_db()
-    await _load_session(sessionId)
+    await _load_session(sessionId, current_user["id"])
 
     await session_store.delete_session(sessionId)
     await qdrant_ops.delete_thread(sessionId)
@@ -110,7 +117,12 @@ async def delete_session(sessionId: str, request: Request):
 # ────────────────────────── 1) 메시지 삭제 ──────────────────────────
 
 @router.delete("/{sessionId}/messages/{messageId}")
-async def delete_message(sessionId: str, messageId: str, request: Request):
+async def delete_message(
+    sessionId: str,
+    messageId: str,
+    request: Request,
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
     """
     챗봇이 출력한 문장(또는 그 짝인 질문)을 삭제한다.
 
@@ -121,8 +133,7 @@ async def delete_message(sessionId: str, messageId: str, request: Request):
       - Qdrant   : turn_id에 해당하는 point
       - LangGraph: 해당 턴의 첫 메시지부터 그 이후 메시지까지 (중간 ToolMessage 포함)
     """
-    _require_db()
-    await _load_session(sessionId)
+    await _load_session(sessionId, current_user["id"])
     message = await _load_message(sessionId, messageId)
 
     turn_id = message.get("turnId")
@@ -172,12 +183,17 @@ async def _graph_id_of(session_id: str, message_id: str) -> Optional[str]:
 # ────────────────────────── 2) 브랜치 생성 ──────────────────────────
 
 class BranchRequest(BaseModel):
-    userId: str = Field(..., description="새 세션 소유자 ID")
     title: Optional[str] = Field(default=None, description="새 세션 제목 (미지정 시 '원본제목 (분기)')")
 
 
 @router.post("/{sessionId}/messages/{messageId}/branch", status_code=201)
-async def branch_from_message(sessionId: str, messageId: str, data: BranchRequest, request: Request):
+async def branch_from_message(
+    sessionId: str,
+    messageId: str,
+    data: BranchRequest,
+    request: Request,
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
     """
     선택한 메시지까지의 대화를 그대로 물려받는 새 세션(브랜치)을 만든다.
 
@@ -188,8 +204,8 @@ async def branch_from_message(sessionId: str, messageId: str, data: BranchReques
 
     이후 새 세션에서 이어지는 대화는 원본 세션에 전혀 영향을 주지 않는다.
     """
-    _require_db()
-    src_session = await _load_session(sessionId)
+    owner_id = current_user["id"]
+    src_session = await _load_session(sessionId, owner_id)
     message = await _load_message(sessionId, messageId)
 
     src_messages = await session_store.list_messages(sessionId)
@@ -201,7 +217,7 @@ async def branch_from_message(sessionId: str, messageId: str, data: BranchReques
     # 새 세션 생성
     title = (data.title or "").strip() or f"{src_session['title']} (분기)"
     new_session = await session_store.create_session(
-        owner_id=data.userId,
+        owner_id=owner_id,
         title=title,
         parent_session_id=sessionId,
         branched_from_message_id=messageId,
@@ -230,7 +246,7 @@ async def branch_from_message(sessionId: str, messageId: str, data: BranchReques
         copied_points = await qdrant_ops.copy_turns(
             turn_id_map=turn_id_map,
             dst_thread_id=new_session_id,
-            dst_user_id=data.userId,
+            dst_user_id=owner_id,
         )
 
         # 3) LangGraph state 분기
@@ -240,7 +256,7 @@ async def branch_from_message(sessionId: str, messageId: str, data: BranchReques
             src_thread_id=sessionId,
             dst_thread_id=new_session_id,
             upto_graph_message_id=branch_graph_id,
-            user_id=data.userId,
+            user_id=owner_id,
         )
     except HTTPException:
         raise
@@ -261,13 +277,18 @@ async def branch_from_message(sessionId: str, messageId: str, data: BranchReques
 # ────────────────────────── 3) 다시 실행 (재생성) ──────────────────────────
 
 class RegenerateRequest(BaseModel):
-    userId: str = Field(..., description="사용자 ID")
     isotime: Optional[str] = Field(default=None, description="클라이언트 로컬 시각 (ISO 8601, 오프셋 포함)")
     model: Optional[str] = Field(default=None, description="이번 재생성에 사용할 모델 (미지정 시 원래 모델 유지)")
 
 
 @router.post("/{sessionId}/messages/{messageId}/regenerate")
-async def regenerate_message(sessionId: str, messageId: str, data: RegenerateRequest, request: Request):
+async def regenerate_message(
+    sessionId: str,
+    messageId: str,
+    data: RegenerateRequest,
+    request: Request,
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
     """
     잘못 나온 답변을 같은 질문으로 다시 생성한다.
 
@@ -278,8 +299,8 @@ async def regenerate_message(sessionId: str, messageId: str, data: RegenerateReq
          save_conversation이 Qdrant의 같은 point를 새 내용으로 덮어쓴다.
       3. Postgres의 assistant 행을 새 내용으로 UPDATE 한다 (id/seq 유지 → 대화 순서 불변)
     """
-    _require_db()
-    await _load_session(sessionId)
+    owner_id = current_user["id"]
+    await _load_session(sessionId, owner_id)
     message = await _load_message(sessionId, messageId)
 
     turn_id = message.get("turnId")
@@ -297,14 +318,14 @@ async def regenerate_message(sessionId: str, messageId: str, data: RegenerateReq
 
     # 1) 이전 실행 결과를 state에서 되돌린다
     await graph_ops.truncate_from(
-        request.app.state.chatbot_agent, sessionId, user_graph_id, user_id=data.userId,
+        request.app.state.chatbot_agent, sessionId, user_graph_id, user_id=owner_id,
     )
 
     # 2) 같은 질문 + 같은 turn_id로 재실행 → Qdrant point는 덮어쓰기 된다
     try:
         answer, ai_graph_id = await run_agent_turn(
             request.app.state.chatbot_agent,
-            user_id=data.userId,
+            user_id=owner_id,
             session_id=sessionId,
             isotime=data.isotime,
             message=user_row["content"],

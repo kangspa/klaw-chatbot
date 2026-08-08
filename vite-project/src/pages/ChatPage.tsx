@@ -95,7 +95,7 @@ export default function ChatPage() {
     setSending(true)
 
     try {
-      const result = await sendChat({ userId: user.id, sessionId, message: text, model })
+      const result = await sendChat({ sessionId, message: text, model })
       // 서버가 Postgres에 저장한 실제 행(id/seq/turnId 포함)으로 교체한다.
       // 이 id들이 있어야 삭제/브랜치/재생성 버튼이 동작한다.
       // 첫 메시지면 백엔드가 세션 제목도 자동 생성하므로 result.session으로 함께 반영한다.
@@ -148,7 +148,7 @@ export default function ChatPage() {
     setNotice(null)
     setBusy({ id: message.id, action: 'branch' })
     try {
-      const result = await branchFromMessage(sessionId, message.id, user.id)
+      const result = await branchFromMessage(sessionId, message.id)
       await refresh()
       navigate(`/chat/${result.session.id}`)
     } catch (err) {
@@ -167,7 +167,7 @@ export default function ChatPage() {
     setBusy({ id: message.id, action: 'regenerate' })
     try {
       const result = await regenerateMessage(
-        sessionId, message.id, user.id, localIsoWithOffset(), model,
+        sessionId, message.id, localIsoWithOffset(), model,
       )
       applyMessages(sessionId, result.messages)
       setNotice('답변을 다시 생성했습니다.')

@@ -133,6 +133,43 @@ a:hover { text-decoration: underline; }
 }
 .auth__switch { text-align: center; margin-top: 20px; font-size: 14px; color: var(--muted); }
 
+/* ---------- Google 계정 로그인 ---------- */
+.auth__lead {
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+.auth__legal {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--faint);
+  text-align: center;
+}
+
+.gsi { display: flex; flex-direction: column; align-items: center; gap: 10px; min-height: 44px; }
+/* GIS가 iframe으로 버튼을 그리므로 내부 요소 크기에 맡긴다 */
+.gsi__button { display: flex; justify-content: center; }
+.gsi__button[hidden] { display: none; }
+.gsi__hint { font-size: 13px; color: var(--muted); }
+
+/* 토큰 검증 중 표시되는 부팅 화면 */
+.app-booting {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.app-booting__logo { font-size: 40px; }
+
 /* ============================================================
    앱 셸 (사이드바 + 메인)
    ============================================================ */
@@ -305,6 +342,8 @@ a:hover { text-decoration: underline; }
   font-size: 13px;
   font-weight: 700;
 }
+/* Google 프로필 사진을 쓸 때는 배경/글자 대신 이미지를 채운다 */
+.sidebar__avatar--photo { object-fit: cover; background: var(--sidebar-elev); }
 .sidebar__username {
   font-size: 14px;
   color: #fff;

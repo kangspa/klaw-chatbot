@@ -82,8 +82,17 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
       <div className="sidebar__footer">
         <div className="sidebar__user">
-          <span className="sidebar__avatar" aria-hidden>{user?.name?.[0]?.toUpperCase() ?? '?'}</span>
-          <span className="sidebar__username" title={user?.id}>{user?.name}</span>
+          {user?.picture ? (
+            <img
+              className="sidebar__avatar sidebar__avatar--photo"
+              src={user.picture}
+              alt=""
+              referrerPolicy="no-referrer"  /* Google 프로필 이미지 차단 방지 */
+            />
+          ) : (
+            <span className="sidebar__avatar" aria-hidden>{user?.name?.[0]?.toUpperCase() ?? '?'}</span>
+          )}
+          <span className="sidebar__username" title={user?.email}>{user?.name}</span>
         </div>
         <button className="btn btn--text" onClick={logout} title="로그아웃">로그아웃</button>
       </div>

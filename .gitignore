@@ -51,3 +51,5 @@ faiss_db
 .venv/
 postgres_data/
 qdrant_data/
+
+client_secret_apps.googleusercontent.com.json

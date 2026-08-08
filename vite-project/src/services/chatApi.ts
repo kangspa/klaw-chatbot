@@ -10,7 +10,6 @@ import { localIsoWithOffset } from './time'
 export const DEFAULT_MODEL = 'gemini/gemini-2.5-flash-lite'
 
 export interface ChatRequest {
-  userId: string
   sessionId: string
   message: string
   model?: string
@@ -46,7 +45,6 @@ export async function sendChat(req: ChatRequest): Promise<ChatResult> {
   }>('/chatbot/chat', {
     method: 'POST',
     body: JSON.stringify({
-      userId: req.userId,
       sessionId: req.sessionId,
       isotime: localIsoWithOffset(),
       message: req.message,

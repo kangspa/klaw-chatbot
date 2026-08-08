@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional, Any
 from langchain_core.messages import HumanMessage
 
 # CHATBOT_AGENT는 main.py의 lifespan startup에서 compile되어
 # request.app.state.chatbot_agent에 저장된다 (체크포인터가 이벤트 루프 필요).
+from api.auth.deps import get_current_user
 from api.chatbot.functions import session_store
 from api.chatbot.functions.chat_runner import (
     LiteLLMCostCallback,  # noqa: F401  (기존 import 경로 호환용 재노출)
@@ -17,7 +18,6 @@ router = APIRouter()
 
 
 class PlanChatRequest(BaseModel):
-    userId: str = Field(..., description="사용자 ID")
     sessionId: str = Field(..., description="세션 ID (thread_id로 사용됨)")
     isotime: str = Field(..., description="클라이언트가 보낸 오프셋(Offset)이 포함된 ISO 8601 형식의 시간 문자열 (형식:YYYY-MM-DDTHH:mm:ss+HH:mm) (예시:2026-04-07T23:16:04+09:00)")
     message: str = Field(..., description="사용자 입력 메시지")
@@ -44,16 +44,23 @@ class PlanChatResponse(BaseModel):
 
 
 @router.post("/chat", response_model=PlanChatResponse)
-async def post_plan_chat(data: PlanChatRequest, request: Request):
+async def post_plan_chat(
+    data: PlanChatRequest,
+    request: Request,
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
     """
     사용자 메시지를 받아 에이전트를 1턴 실행하고, 결과를 세 저장소에 함께 기록하는 End-point
 
       - Postgres : 화면에 보여줄 대화 원문 (user/assistant 메시지 2행, 같은 turn_id)
       - Qdrant   : 의미 검색용 벡터 (turn_id를 point id로 사용, 1턴 = 1 point)
       - LangGraph: 실행 상태(체크포인트)
+
+    사용자 id는 요청 본문이 아니라 Bearer 토큰에서 가져온다(남의 세션에 쓰는 것을 막기 위함).
     """
     # lifespan에서 compile된 에이전트를 app.state에서 꺼내 사용
     chatbot_agent = request.app.state.chatbot_agent
+    user_id = current_user["id"]
 
     # 이번 턴의 식별자들을 미리 만들어둔다.
     #  - turn_id: Qdrant point id 이자 Postgres의 turn 키
@@ -62,17 +69,17 @@ async def post_plan_chat(data: PlanChatRequest, request: Request):
     user_message_id = session_store.new_id()
     assistant_message_id = session_store.new_id()
 
-    # 세션 보장 (프론트가 만들기 전에 /chat이 먼저 도달해도 동작하도록)
-    if db_is_ready():
-        try:
-            await session_store.ensure_session(data.sessionId, data.userId)
-        except Exception as e:
-            print(f"[Postgres] 세션 보장 실패(계속 진행): {type(e).__name__}: {e}")
+    # 세션 보장 + 소유권 확인 (프론트가 만들기 전에 /chat이 먼저 도달해도 동작하도록)
+    session = await session_store.get_session(data.sessionId)
+    if session is None:
+        await session_store.ensure_session(data.sessionId, user_id)
+    elif session["ownerId"] != user_id:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
 
     try:
         answer, ai_graph_id = await run_agent_turn(
             chatbot_agent,
-            user_id=data.userId,
+            user_id=user_id,
             session_id=data.sessionId,
             isotime=data.isotime,
             message=data.message,
@@ -112,13 +119,21 @@ async def post_plan_chat(data: PlanChatRequest, request: Request):
 
 
 @router.get("/{sessionId}/history")
-async def get_draft_history(sessionId: str, request: Request):
+async def get_draft_history(
+    sessionId: str,
+    request: Request,
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
     """
     특정 세션의 대화 기록을 조회하는 End-point.
 
     Postgres가 준비되어 있으면 그쪽(사용자에게 보여줄 원문)을 우선 사용하고,
     없을 때만 LangGraph 체크포인트에서 읽는다.
     """
+    session = await session_store.get_session(sessionId)
+    if session is None or session["ownerId"] != current_user["id"]:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+
     if db_is_ready():
         try:
             messages = await session_store.list_messages(sessionId)

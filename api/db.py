@@ -29,9 +29,26 @@ _POOL: asyncpg.Pool | None = None
 
 
 SCHEMA_SQL = """
+-- 회원 정보. 로그인은 Google 계정 연동만 지원한다.
+-- 이메일은 변경될 수 있으므로 Google이 발급하는 불변 식별자(sub)를 계정의 진짜 키로 삼고,
+-- 애플리케이션 내부에서는 별도 UUID(id)를 사용해 외부 식별자와 분리한다.
+CREATE TABLE IF NOT EXISTS users (
+    id             TEXT PRIMARY KEY,          -- 내부 사용자 UUID (chat_sessions.owner_id가 참조)
+    google_sub     TEXT UNIQUE NOT NULL,      -- Google 계정 고유 식별자 (변하지 않음)
+    email          TEXT NOT NULL,
+    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    name           TEXT NOT NULL,
+    picture        TEXT,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_login_at  TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+
 CREATE TABLE IF NOT EXISTS chat_sessions (
     id                      TEXT PRIMARY KEY,               -- = LangGraph thread_id = Qdrant payload.thread_id
-    owner_id                TEXT NOT NULL,
+    owner_id                TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title                   TEXT NOT NULL DEFAULT '새 대화',
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),

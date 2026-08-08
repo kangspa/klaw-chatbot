@@ -11,11 +11,9 @@ import { apiFetch } from './http'
 
 const BASE = '/chatbot/sessions'
 
-/** 사용자의 세션 목록 (메시지 포함, 최근 활동순) */
-export async function listSessions(ownerId: string): Promise<Session[]> {
-  const data = await apiFetch<{ sessions: Session[] }>(
-    `${BASE}?userId=${encodeURIComponent(ownerId)}`,
-  )
+/** 로그인한 회원의 세션 목록 (메시지 포함, 최근 활동순) */
+export async function listSessions(): Promise<Session[]> {
+  const data = await apiFetch<{ sessions: Session[] }>(BASE)
   return data.sessions ?? []
 }
 
@@ -23,10 +21,10 @@ export async function getSession(id: string): Promise<Session> {
   return apiFetch<Session>(`${BASE}/${encodeURIComponent(id)}`)
 }
 
-export async function createSession(ownerId: string, title?: string): Promise<Session> {
+export async function createSession(title?: string): Promise<Session> {
   return apiFetch<Session>(BASE, {
     method: 'POST',
-    body: JSON.stringify({ userId: ownerId, title }),
+    body: JSON.stringify({ title }),
   })
 }
 
@@ -74,12 +72,11 @@ export interface BranchResult {
 export async function branchFromMessage(
   sessionId: string,
   messageId: string,
-  ownerId: string,
   title?: string,
 ): Promise<BranchResult> {
   return apiFetch<BranchResult>(
     `${BASE}/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/branch`,
-    { method: 'POST', body: JSON.stringify({ userId: ownerId, title }) },
+    { method: 'POST', body: JSON.stringify({ title }) },
   )
 }
 
@@ -96,13 +93,12 @@ export interface RegenerateResult {
 export async function regenerateMessage(
   sessionId: string,
   messageId: string,
-  ownerId: string,
   isotime: string,
   model?: string,
 ): Promise<RegenerateResult> {
   return apiFetch<RegenerateResult>(
     `${BASE}/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/regenerate`,
-    { method: 'POST', body: JSON.stringify({ userId: ownerId, isotime, model }) },
+    { method: 'POST', body: JSON.stringify({ isotime, model }) },
   )
 }
 

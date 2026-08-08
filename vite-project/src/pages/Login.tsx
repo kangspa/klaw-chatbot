@@ -1,24 +1,27 @@
-import { useState, type FormEvent } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import GoogleSignInButton from '../components/GoogleSignInButton'
 
+/**
+ * 로그인 = 회원가입.
+ * Google 계정 연동만 지원하므로 별도의 가입 절차나 비밀번호 입력이 없다.
+ * 처음 로그인하는 계정이면 백엔드가 users 테이블에 회원을 자동으로 만든다.
+ */
 export default function Login() {
-  const { login } = useAuth()
+  const { loginWithGoogle } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const from = (location.state as { from?: string } | null)?.from ?? '/chat'
 
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault()
+  const handleCredential = async (credential: string) => {
     setError(null)
     setBusy(true)
     try {
-      await login(email, password)
+      await loginWithGoogle(credential)
       navigate(from, { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : '로그인에 실패했습니다.')
@@ -36,42 +39,18 @@ export default function Login() {
           <p className="auth__tagline">국내법 상담 AI 챗봇</p>
         </div>
 
-        <form className="auth__form" onSubmit={onSubmit}>
-          <label className="field">
-            <span className="field__label">이메일</span>
-            <input
-              type="email"
-              className="field__input"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              autoComplete="username"
-              required
-            />
-          </label>
+        <p className="auth__lead">
+          Google 계정으로 시작하세요.<br />
+          처음이시라면 로그인과 동시에 자동으로 가입됩니다.
+        </p>
 
-          <label className="field">
-            <span className="field__label">비밀번호</span>
-            <input
-              type="password"
-              className="field__input"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              autoComplete="current-password"
-              required
-            />
-          </label>
+        {error && <p className="auth__error">{error}</p>}
 
-          {error && <p className="auth__error">{error}</p>}
+        <GoogleSignInButton onCredential={handleCredential} busy={busy} />
 
-          <button className="btn btn--primary btn--block btn--lg" disabled={busy}>
-            {busy ? '로그인 중…' : '로그인'}
-          </button>
-        </form>
-
-        <p className="auth__switch">
-          아직 계정이 없으신가요? <Link to="/signup">회원가입</Link>
+        <p className="auth__legal">
+          로그인하면 Google 계정의 이름·이메일·프로필 사진을 받아 회원 정보로 저장합니다.
+          대화 기록은 회원 계정에 연결되어 보관됩니다.
         </p>
       </div>
     </div>
