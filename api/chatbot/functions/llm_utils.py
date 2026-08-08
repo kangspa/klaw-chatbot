@@ -8,6 +8,8 @@ import os
 import asyncio
 
 import litellm
+from langchain_core.messages import AIMessage, HumanMessage
+
 from api.load_variable import MODEL_MANAGER
 
 
@@ -28,6 +30,27 @@ BACKOFF_BASE = 1.0       # 지수 백오프 기준(초): 1 → 2 → 4
 # .env에 CHAT_FALLBACK_MODELS="openai/gpt-4o-mini,anthropic/claude-sonnet-4-5" 형태로 지정.
 # (해당 provider API 키가 있어야 실제로 폴백됨. 미지정 시 폴백 없이 처리.)
 FALLBACK_MODELS = [m.strip() for m in os.getenv("CHAT_FALLBACK_MODELS", "").split(",") if m.strip()]
+
+
+# 마지막이 AI 응답인 요청을 거부하는 모델을 위해 덧붙이는 사용자 턴.
+TRAILING_USER_TURN = "위 내용을 바탕으로 시스템 지시에 따라 응답하세요."
+
+
+def ensure_user_turn(messages: list) -> list:
+    """
+    프롬프트가 AI 메시지로 끝나지 않도록 보정한다.
+
+    Gemini 3.x 계열은 마지막 메시지가 model 턴이면 400을 반환한다
+    ("Requests ending with a model turn are not supported"). Gemini 2.5는 허용했다.
+    그런데 이 앱에는 AI 메시지로 끝나는 프롬프트가 정상적으로 존재한다.
+      - summary_turn / update_entity: 대화쌍(Human→AI)을 통째로 넘겨 요약/추출
+      - law_response_agent: 검색 종료 표식(AIMessage)이 마지막에 붙은 상태
+    호출부마다 고치면 빠뜨리기 쉬우므로, 모든 LLM 호출이 지나가는 이 지점에서 한 번에 맞춘다.
+    다른 제공자에는 무해한 지시문이라 분기 없이 적용한다.
+    """
+    if messages and isinstance(messages[-1], AIMessage):
+        return list(messages) + [HumanMessage(content=TRAILING_USER_TURN)]
+    return messages
 
 
 def finish_reason_of(msg) -> str:
@@ -74,6 +97,7 @@ async def resilient_ainvoke(model_name: str, available_tools, prompt,
     max_retries=1로 주면 재시도 없이 후보별 1회만 시도(지연 최소화, 메모리 노드용).
     """
     candidates = [model_name] + [m for m in FALLBACK_MODELS if m != model_name]
+    prompt = ensure_user_turn(prompt) if isinstance(prompt, list) else prompt
     last_empty = None
     last_error = None
 

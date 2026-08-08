@@ -7,7 +7,17 @@ import { branchFromMessage, deleteMessage, getSession, regenerateMessage } from 
 import { localIsoWithOffset } from '../services/time'
 import type { ChatMessage } from '../types'
 
+/**
+ * 선택 가능한 모델 목록. value는 LiteLLM 표준 prefix 형식이며 백엔드에 그대로 전달된다.
+ * 백엔드는 모델을 화이트리스트로 제한하지 않으므로 여기 추가하면 바로 사용할 수 있다.
+ *
+ * 법률 검색 노드의 재검색 루프는 모델의 도구 호출(tool calling) 능력에 크게 좌우된다.
+ * (도구 호출을 잘 못하면 코드가 재검색을 강제하는 폴백으로 넘어간다 — agent.py의 force_next_search)
+ */
 const MODELS = [
+  { value: 'gemini/gemini-3.6-flash', label: 'Gemini 3.6 Flash' },
+  { value: 'gemini/gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite' },
+  { value: 'gemini/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (Preview)' },
   { value: 'gemini/gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
   { value: 'openai/gpt-4o-mini', label: 'GPT-4o mini' },
   { value: 'anthropic/claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
