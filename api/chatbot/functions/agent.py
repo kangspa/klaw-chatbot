@@ -13,6 +13,7 @@ from api.chatbot.functions.summary import memory_manager_graph
 from api.chatbot.functions.llm_utils import (
     resilient_ainvoke, is_empty_answer, finish_reason_of, empty_answer_notice,
 )
+from api.chatbot.functions.law_auth import find_auth_failure, looks_like_auth_failure
 
 # === 도구 분류 및 ToolNode 구성 ===
 # 로컬 도구(직접 정의) 및 MCP 법률 도구(LAW_TOOLS) 분리
@@ -25,6 +26,17 @@ LAW_TOOL_NAMES = {t.name for t in LAW_TOOLS}
 # 사용자에게 보이는 문장이 아니라 law_response_agent가 읽는 신호다.
 SEARCH_DONE_MARKER = "[법률 정보 검색 완료]"
 SEARCH_FAILED_MARKER = "[법률 정보 검색 실패]"
+SEARCH_AUTH_ERROR_MARKER = "[법률 검색 시스템 인증 오류]"
+
+# 재검색 라운드별 temperature 에스컬레이션.
+# 첫 시도는 결정적으로(0.2), 실패가 쌓일수록 탐색적으로(0.5 → 0.8 → 1.0) 올려
+# 같은 검색어를 반복 생성하는 고착을 깬다. 소진 후에는 1.0으로 반복.
+# 주의: Gemini 3+ 는 temperature 지정 자체가 deprecated라 get_model이 무시한다(기본 1.0).
+TEMP_SCHEDULE = (0.2, 0.5, 0.8, 1.0)
+
+
+def escalated_temperature(failed_count: int) -> float:
+    return TEMP_SCHEDULE[min(failed_count, len(TEMP_SCHEDULE) - 1)]
 
 # 법률 답변에 반드시 붙어야 하는 면책 문구.
 # 프롬프트로만 지시하면 모델이 종종 빠뜨리므로, 최종 답변에 코드로 보장한다.
@@ -83,7 +95,9 @@ LOCAL_TOOL_LIMITS = {
 }
 
 MCP_TOOL_LIMIT_OVERRIDES = {
-    "chain_full_research": 5,   # 종합 검색 체인 도구
+    # v4.4.0에서 chain_* 8개가 legal_research(task 파라미터)로 통합 노출됨.
+    # (기존 chain_full_research 항목은 노출 목록에 없어 무의미해 제거)
+    "legal_research": 5,   # 종합 검색 통합 진입점
 }
 
 
@@ -161,7 +175,13 @@ def summarize_law_search(messages: list) -> tuple[list[dict], bool]:
             continue  # 로컬 도구 호출은 집계 대상이 아님
         tool_name, args = info
         content = str(m.content or "")
-        failed = getattr(m, "status", None) == "error" or "[NOT_FOUND]" in content
+        # 실패 판정: ToolNode의 error status / MCP의 결과없음 표식 / 법제처 인증 실패 페이지
+        # (인증 실패는 API가 정상 응답처럼 안내 페이지를 돌려주는 경우가 있어 별도 검사)
+        failed = (
+            getattr(m, "status", None) == "error"
+            or "[NOT_FOUND]" in content
+            or looks_like_auth_failure(content)
+        )
 
         attempts.append({
             "tool": tool_name,
@@ -251,7 +271,8 @@ def substitute_query(query: str) -> str | None:
     return None
 
 
-async def ask_alternative_keyword(model_name: str, question: str, tried: list[str]) -> str | None:
+async def ask_alternative_keyword(model_name: str, question: str, tried: list[str],
+                                  temperature: float = 1.0) -> str | None:
     """
     유사 법령 용어를 LLM에게 물어본다. 도구 호출이 아니라 '검색어 한 줄'만 요구하므로
     도구 호출을 유도하는 것보다 훨씬 안정적으로 원하는 결과를 얻을 수 있다.
@@ -275,7 +296,10 @@ async def ask_alternative_keyword(model_name: str, question: str, tried: list[st
 - 설명·따옴표·문장부호 없이 **검색어만** 한 줄로 출력하세요.
 """
     try:
-        res = await resilient_ainvoke(model_name, [], [SystemMessage(content=prompt)], max_retries=1)
+        res = await resilient_ainvoke(
+            model_name, [], [SystemMessage(content=prompt)],
+            temperature=temperature, max_retries=1,
+        )
     except Exception as e:
         print(f"--- [재검색] 대체 검색어 제안 실패: {type(e).__name__}: {e} ---")
         return None
@@ -300,7 +324,8 @@ def pick_search_tool(available_law_tools):
     return None
 
 
-async def force_next_search(model_name, question, attempts, available_law_tools):
+async def force_next_search(model_name, question, attempts, available_law_tools,
+                            temperature: float = 1.0):
     """
     모델이 재검색을 포기했을 때, 다음 검색을 코드가 직접 만들어 도구 호출 메시지로 돌려준다.
 
@@ -346,8 +371,8 @@ async def force_next_search(model_name, question, attempts, available_law_tools)
         if (picked := fresh(substitute_query(source))):
             return _make_search_call(tool, picked, "유사 법령 용어 치환")
 
-    # 4) LLM에게 대체 검색어 요청
-    if (picked := fresh(await ask_alternative_keyword(model_name, question, tried))):
+    # 4) LLM에게 대체 검색어 요청 (에스컬레이션된 temperature로 — 새로운 후보를 얻는 게 목적)
+    if (picked := fresh(await ask_alternative_keyword(model_name, question, tried, temperature))):
         return _make_search_call(tool, picked, "LLM 제안 대체 검색어")
 
     return None
@@ -610,6 +635,13 @@ async def law_search_agent(state: AgentState, config: RunnableConfig):
     # 이번 턴의 검색 이력 (재검색 전략 수립 + 실패 시 안내 문구 작성에 사용)
     attempts, any_success = summarize_law_search(state["messages"])
 
+    # 인증 실패는 '검색 결과 없음'과 다르다 — 검색어를 아무리 바꿔도 소용없으므로
+    # 재검색을 즉시 중단하고 응답 노드에 '시스템 오류'를 알린다.
+    auth_err = find_auth_failure(attempts)
+    if auth_err:
+        print(f"--- [law_search_agent] 법제처 인증 실패 감지 → 재검색 중단: {auth_err[:80]} ---")
+        return {"messages": [AIMessage(content=SEARCH_AUTH_ERROR_MARKER)]}
+
     # 재검색 검색어를 코드로 만들 때 기준이 되는 원 질문
     user_question = next(
         (m.content for m in reversed(state["messages"])
@@ -656,6 +688,12 @@ async def law_search_agent(state: AgentState, config: RunnableConfig):
     ]
     next_step = ESCALATION[min(failed_count, len(ESCALATION) - 1)]
 
+    # 실패가 쌓일수록 temperature를 0.2 → 0.5 → 0.8 → 1.0으로 올려
+    # 같은 검색어를 반복 생성하는 고착을 깬다 (Gemini 3+는 get_model에서 무시됨)
+    temperature = escalated_temperature(failed_count)
+    if failed_count > 0:
+        print(f"--- [law_search_agent] temperature 에스컬레이션: {temperature} (실패 {failed_count}회) ---")
+
     search_prompt = f"""
 당신은 한국 법률 정보 전용 검색 에이전트입니다.
 사용자의 질문 및 대화 맥락에 대해 답변할 수 있는 확실한 법률 정보(법령, 조문, 판례, 행정규칙, 조례 등)를 아래 [korean-law-mcp 법률 도구]를 사용해 **무조건 검색**하세요.
@@ -692,7 +730,9 @@ async def law_search_agent(state: AgentState, config: RunnableConfig):
     summary_message = SystemMessage(content=summary_content)
     final_prompt = [system_prompt, summary_message] + state["messages"]
 
-    response = await resilient_ainvoke(model_name, available_law_tools, final_prompt)
+    response = await resilient_ainvoke(
+        model_name, available_law_tools, final_prompt, temperature=temperature,
+    )
 
     def has_tool_calls(msg) -> bool:
         return bool(msg is not None and getattr(msg, "tool_calls", None))
@@ -703,7 +743,9 @@ async def law_search_agent(state: AgentState, config: RunnableConfig):
     # 그래서 아직 기회가 남아 있고 성공한 검색이 없다면 다음 검색을 코드가 직접 만들어 넣는다.
     if not has_tool_calls(response) and not any_success:
         print(f"--- [law_search_agent] 모델이 재검색 포기 (실패 {failed_count}회) → 코드가 재검색 강제 ---")
-        forced = await force_next_search(model_name, user_question, attempts, available_law_tools)
+        forced = await force_next_search(
+            model_name, user_question, attempts, available_law_tools, temperature=temperature,
+        )
         if forced is not None:
             response = forced
         else:
@@ -791,6 +833,20 @@ async def law_response_agent(state: AgentState, config: RunnableConfig):
     # 이 경우에는 '검색 실패를 알리고 다시 물어보도록 안내'하는 전용 프롬프트로 전환한다.
     attempts, any_success = summarize_law_search(state["messages"])
     search_exhausted = bool(attempts) and not any_success
+
+    # 인증 실패는 재질문 안내와 별개다 — 사용자 질문이 아니라 시스템이 문제이므로,
+    # 질문을 바꾸라는 안내 대신 '시스템 점검 중' 안내를 LLM 호출 없이 즉시 반환한다.
+    # (근거 없이 LLM에게 맡기면 원인을 사용자 탓으로 돌리는 문장이 나올 수 있다)
+    if find_auth_failure(attempts):
+        print("--- [law_response_agent] 법제처 인증 오류 → 시스템 안내문 반환 (LLM 미호출) ---")
+        notice = (
+            "죄송합니다. 지금 법령 검색 시스템에 일시적인 문제(법제처 API 인증 오류)가 있어 "
+            "법령·판례를 확인할 수 없습니다.\n\n"
+            "질문에는 문제가 없으니 잠시 후 같은 질문으로 다시 시도해주세요. "
+            "문제가 계속되면 관리자에게 문의해주시기 바랍니다.\n\n"
+            f"{LEGAL_DISCLAIMER}"
+        )
+        return {"messages": [AIMessage(content=notice)]}
 
     if search_exhausted:
         tried = failed_queries(attempts)

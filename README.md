@@ -137,6 +137,22 @@ cd vite-project && npm run dev   # 프론트 (http://localhost:5173)
 | `GOOGLE_CLIENT_ID` | Google OAuth 웹 클라이언트 ID. **비어 있으면 로그인 화면에 안내 문구가 뜨고 로그인할 수 없다** |
 | `APP_JWT_SECRET` | 액세스 토큰 서명 키. 비워두면 서버 시작마다 임시 키가 생성되어 재시작 시 모든 로그인이 풀린다 |
 | `APP_JWT_TTL_SECONDS` | 토큰 수명(초). 기본 7일 |
+| `ANNEX_OCR_ENABLED` | 이미지 기반 별표(PDF) 응답을 PaddleOCR로 텍스트화하는 후처리. 기본 켜짐, `0`이면 끔 |
+| `CHAT_FALLBACK_MODELS` | 기본 모델 실패(429 등) 시 순차 폴백할 모델 목록 (쉼표 구분, 선택) |
+
+## 법령 검색 안정성 장치
+
+- **인증 preflight**: 서버 시작 시 canary 법령('민법')을 검색해 법제처 Open API(LAW_OC) 인증이
+  실제로 동작하는지 확인한다. 실패해도 기동은 계속하되 로그에 크게 경고를 남긴다.
+  대화 중 인증 실패 시그니처가 감지되면 재검색을 즉시 중단하고, 사용자에게
+  "질문을 바꿔라"가 아니라 **시스템 문제**로 안내한다 (`law_auth.py`).
+- **temperature 에스컬레이션**: 법령 재검색 라운드마다 0.2 → 0.5 → 0.8 → 1.0(이후 반복)으로
+  올려 같은 검색어를 반복 생성하는 고착을 깬다. **Gemini 3+에는 temperature를 지정하지 않는다**
+  (deprecated + `<1.0`은 무한루프·추론저하 경고, LiteLLM 기준).
+- **별표 이미지 OCR**: 도구 응답에 "이미지 기반 PDF" 안내나 `<img>` 조각이 섞여 있으면
+  파일을 내려받아 PaddleOCR(한국어)로 텍스트를 추출해 응답 뒤에 덧붙인다 (`tool_annex_ocr.py`).
+  실행 디바이스는 런타임에 동적 결정 — CUDA 지원 paddlepaddle + GPU가 보이면 GPU, 아니면 CPU.
+  GPU 서버에서는 `paddlepaddle-gpu`만 별도 설치하면 코드 수정 없이 GPU로 동작한다.
 
 Postgres 연결에 실패하면 서버는 뜨지만 `/auth/*` 와 `/chatbot/*` 는 503을 반환한다 (서버 로그의 `[Postgres]` 항목 확인).
 

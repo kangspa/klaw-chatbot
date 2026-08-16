@@ -26,6 +26,13 @@ dependencies = [
     "pyjwt[crypto]>=2.10.0",
     # --- 웹 크롤링 (page_crawl4ai 도구) ---
     "crawl4ai>=0.8.5",
+    # --- 별표 이미지 OCR (tool_annex_ocr) ---
+    # paddlepaddle은 CPU 기본. GPU 서버에서는 paddlepaddle-gpu를 별도 설치하면
+    # 코드가 런타임에 CUDA 지원을 감지해 자동으로 GPU를 사용한다.
+    "paddleocr>=3.0.0",
+    "paddlepaddle>=3.0.0",
+    "pymupdf>=1.25.0",
+    "requests>=2.32.0",
     # --- 유틸 ---
     "cachetools>=7.0.4",
     "pydantic>=2.10.0",

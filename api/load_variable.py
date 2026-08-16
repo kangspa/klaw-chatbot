@@ -56,6 +56,16 @@ GEMINI_EMBEDDINGS = LiteLLMEmbeddings(model=EMBEDDING_MODEL)
 QDRANT_DB = AsyncQdrantClient(host="localhost", grpc_port=6334, prefer_grpc=True)
 
 
+# "gemini/gemini-3.5-flash-lite" 등에서 Gemini 메이저 버전 추출
+import re as _re
+_GEMINI_VER_RE = _re.compile(r"gemini-(\d+)", _re.IGNORECASE)
+
+
+def is_gemini_3_or_newer(model_name: str) -> bool:
+    m = _GEMINI_VER_RE.search(model_name or "")
+    return bool(m) and int(m.group(1)) >= 3
+
+
 class DynamicModelManager:
     """
     LiteLLM 기반 ChatLiteLLM 인스턴스 캐시.
@@ -76,10 +86,20 @@ class DynamicModelManager:
         self.cache = TTLCache(maxsize=maxsize, ttl=ttl)
 
     def get_model(self, model_name: str, temperature: float = 0.2) -> ChatLiteLLM:
-        cache_key = f"{model_name}_{temperature}"
+        # Gemini 3+ 는 temperature/top_p/top_k 를 deprecated 처리하며, 특히
+        # temperature < 1.0 은 무한루프·추론성능 저하를 유발할 수 있다고 LiteLLM이 경고한다.
+        # 따라서 Gemini 3+ 에는 temperature 를 아예 지정하지 않는다(기본값 = 1.0).
+        # (temperature 에스컬레이션은 Gemini 2.x 및 타 provider에서만 실효를 갖는다)
+        if is_gemini_3_or_newer(model_name):
+            cache_key = f"{model_name}_default"
+            if cache_key not in self.cache:
+                print(f"--- [Memory] New model instance: {model_name} (Gemini 3+: temperature 미지정) ---")
+                self.cache[cache_key] = ChatLiteLLM(model=model_name)
+            return self.cache[cache_key]
 
+        cache_key = f"{model_name}_{temperature}"
         if cache_key not in self.cache:
-            print(f"--- [Memory] New model instance: {model_name} ---")
+            print(f"--- [Memory] New model instance: {model_name} (temperature={temperature}) ---")
             self.cache[cache_key] = ChatLiteLLM(
                 model=model_name,
                 temperature=temperature,
@@ -111,6 +131,11 @@ try:
     print(f"[MCP] Korean Law 도구 로드 완료: {len(LAW_TOOLS)}개")
     for _t in LAW_TOOLS:
         print(f"  - {_t.name}")
+
+    # 이미지 기반 별표(PDF) 응답을 PaddleOCR 텍스트로 보강하는 후처리 래핑
+    # (OCR 엔진은 첫 사용 시 lazy 초기화 — 서버 기동 시간에는 영향 없음)
+    from api.chatbot.functions.tool_annex_ocr import wrap_tools_with_annex_ocr
+    LAW_TOOLS = wrap_tools_with_annex_ocr(LAW_TOOLS)
 except Exception as _mcp_err:
     print(f"[MCP] Korean Law 도구 로드 실패: {_mcp_err}")
     print("[MCP] docker가 실행 중인지, http://localhost:3000/health 가 응답하는지 확인하세요.")

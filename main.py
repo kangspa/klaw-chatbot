@@ -9,6 +9,15 @@ import sys
 import asyncio
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+# Windows 콘솔(cp949)에서 em-dash 등 비-cp949 문자가 섞인 로그(print)가
+# UnicodeEncodeError로 죽는 것을 방지 — 에러 로깅이 에러를 내면 원인 추적이 불가능해진다.
+# (외부 API 에러 메시지에는 em-dash/이모지가 흔히 포함된다)
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
 # ──────────────────────────────────────────────────────────────────
 
 import dotenv, os
@@ -22,6 +31,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from api import api_router
 from api.db import close_pool, init_pool
 from api.chatbot.functions.agent import build_chatbot_agent
+from api.chatbot.functions.law_auth import preflight_law_auth
 from api.chatbot.functions.summary import ensure_conversation_history_collection
 
 # .env 파일에서 환경 변수 로드
@@ -36,6 +46,8 @@ async def lifespan(app: FastAPI):
     #  - MemorySaver : LangGraph 실행 상태 (같은 thread_id 내 multi-turn 유지, 서버 재시작 시 휘발)
     await init_pool()
     await ensure_conversation_history_collection()
+    # 법제처 Open API 인증 canary 확인 (실패해도 기동은 계속 — 로그로 조기 경보만)
+    await preflight_law_auth()
     checkpointer = MemorySaver()
     app.state.chatbot_agent = build_chatbot_agent(checkpointer)
 

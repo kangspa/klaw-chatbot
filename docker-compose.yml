@@ -75,8 +75,10 @@ services:
       # - RATE_LIMIT_RPM=120
       # - TRUST_PROXY=1
     healthcheck:
-      # Dockerfile의 HEALTHCHECK와 동일 — /health 엔드포인트가 200 응답해야 healthy
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      # /health 엔드포인트가 200 응답해야 healthy.
+      # localhost는 컨테이너 안에서 IPv6(::1)로 먼저 해석되는데 서버는 IPv4(0.0.0.0)로만
+      # 리슨하므로 계속 unhealthy로 보였다 → 127.0.0.1로 고정.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/health"]
       interval: 30s
       timeout: 5s
       start_period: 10s
