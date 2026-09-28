@@ -28,7 +28,8 @@ services:
     restart: always
 
   qdrant:
-    image: qdrant/qdrant:latest  # 최신 이미지를 권장합니다.
+    # 버전 고정 (태그는 표시용, 실제로는 digest로 받는다). 올릴 때는 기존 저장 데이터 호환성을 먼저 확인할 것.
+    image: qdrant/qdrant:v1.19.0@sha256:057ee3a8da769fe7310dd3537b4dc7583bf87a95ce8ac43c0af5a46bc580d1fc
     container_name: qdrant
     ports:
       - "6333:6333" # REST API (기본 접속용)
@@ -39,7 +40,8 @@ services:
 
   postgres:
     # LangGraph checkpointer + PostgresStore + 마스터 테이블용
-    image: postgres:16-alpine
+    # 버전 고정 (태그는 표시용, 실제로는 digest로 받는다)
+    image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     container_name: postgres
     ports:
       - "5432:5432"  # 호스트 5432 ↔ 컨테이너 5432
