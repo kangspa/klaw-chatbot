@@ -53,3 +53,5 @@ postgres_data/
 qdrant_data/
 
 client_secret_apps.googleusercontent.com.json
+# 로컬 LLM (Ollama) — 호스트별 GPU 설정 (scripts/setup_local_llm.py가 생성)
+docker-compose.override.yml

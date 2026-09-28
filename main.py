@@ -30,6 +30,7 @@ import uvicorn
 from langgraph.checkpoint.memory import MemorySaver
 from api import api_router
 from api.db import close_pool, init_pool
+from api.llm_gateway.local_runtime import report_local_runtime
 from api.llm_gateway.store import seed_if_empty as seed_llm_models_if_empty
 from api.load_variable import MODEL_REGISTRY
 from api.chatbot.functions.agent import build_chatbot_agent
@@ -56,6 +57,9 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[llm_gateway] 모델 초기 데이터 등록 실패: {type(e).__name__}: {e}")
         await MODEL_REGISTRY.refresh(force=True)
+        # 로컬 모델(Ollama 컨테이너) 읽기 전용 점검: 미기동·모델 누락·CPU 동작 여부를 로그로 알린다
+        local_ids = [s.id for s in await MODEL_REGISTRY.list_enabled() if s.id.startswith("ollama/")]
+        await asyncio.to_thread(report_local_runtime, local_ids)
     await ensure_conversation_history_collection()
     # 법제처 Open API 인증 canary 확인 (실패해도 기동은 계속 — 로그로 조기 경보만)
     await preflight_law_auth()

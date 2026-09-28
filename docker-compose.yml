@@ -92,3 +92,24 @@ services:
       start_period: 10s
       retries: 3
     restart: always
+  ollama:
+    # 로컬 LLM 서버. 이미지는 docker/ollama/Dockerfile (Ollama 0.34.4 + CUDA/Vulkan/Dozen 드라이버, 버전 고정)
+    # 기본은 CPU로 동작한다. GPU 가속은 호스트마다 넘길 장치가 달라서(NVIDIA / Linux /dev/dri / WSL2 /dev/dxg)
+    # scripts/setup_local_llm.py가 호스트를 감지해 docker-compose.override.yml(자동 병합, git 제외)에 적는다.
+    build:
+      context: ./docker/ollama
+    image: klaw-ollama:0.34.4
+    container_name: ollama
+    ports:
+      - "11434:11434"             # 앱은 OLLAMA_BASE_URL(기본 http://localhost:11434)로 접근
+    volumes:
+      # 받은 모델 영구 저장 (수 GB). Windows 폴더 바인드 마운트(./ollama_data)는 쓰지 않는다 —
+      # Docker Desktop(WSL2)에서 GPU 버퍼로 모델을 읽을 때 "read error: Bad address"로 로드가 실패하고,
+      # 대용량 파일 읽기도 느리다. Docker 볼륨은 WSL2 VM 내부 디스크에 있어 두 문제가 없다.
+      - ollama_models:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=10m     # 마지막 요청 후 모델을 메모리에 유지하는 시간
+    restart: always
+
+volumes:
+  ollama_models:   # 로컬 LLM 모델 저장소 (docker volume rm klaw-chatbot_ollama_models 로 삭제)
