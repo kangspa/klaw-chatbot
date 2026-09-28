@@ -1,7 +1,9 @@
 services:
   searxng: # 서비스의 논리적 이름을 정의합니다.
     container_name: searxng # 도커 엔진에서 이 컨테이너를 식별하는 고정 이름을 설정합니다.
-    image: searxng/searxng:latest # 사용할 이미지입니다. 최신 버전의 SearxNG 이미지를 가져옵니다.
+    # 버전 고정 (태그는 표시용, 실제로는 digest로 받는다). latest를 쓰면 pull만 해도 엔진 구성이 바뀌어
+    # 검색이 깨질 수 있다 (2026.8→2026.9에서 기본 엔진이 교체됨). 올릴 때는 config/settings.yml과 함께 점검.
+    image: searxng/searxng:2026.9.25-12f8b6515@sha256:5286edb35782454ab8a102c5eff6b54bff745853191b46aeead95f225aa6dfb6
     ports:
       - "8888:8080" # 내 PC의 8888 포트를 컨테이너 안의 8080(기본 포트)과 연결합니다.
     volumes:

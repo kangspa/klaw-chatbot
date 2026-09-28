@@ -1,13 +1,16 @@
 # SearXNG bot detection / rate limiter 설정
-# 로컬 개발 환경에서는 limiter 자체를 비활성화 (settings.yml의 server.limiter: false)
-# 이 파일은 startup WARNING을 없애기 위한 빈 설정.
-# 운영 시 활성화하려면 SearXNG 공식 limiter.toml 템플릿을 참고하세요:
-# https://github.com/searxng/searxng/blob/master/utils/templates/etc/searxng/limiter.toml
+# 로컬 개발 환경에서는 limiter 자체를 비활성화한다 (settings.yml의 server.limiter: false)
+# 이 파일은 파일이 없을 때 나는 startup WARNING을 없애기 위한 최소 설정이다.
+#
+# 2026.9 이후 형식: 예전 [real_ip] 섹션(x_for / ipv4_prefix / ipv6_prefix)은 폐기되어
+# [botdetection]의 trusted_proxies / ipv4_prefix / ipv6_prefix로 옮겨졌다 (DeprecationWarning 원인).
+# 공식 템플릿: https://github.com/searxng/searxng/blob/master/searx/limiter.toml
 
-[real_ip]
-x_for = 1
+[botdetection]
 ipv4_prefix = 32
-ipv6_prefix = 56
+ipv6_prefix = 48
+# 리버스 프록시 뒤에 둘 때만 의미가 있다 (X-Forwarded-For를 신뢰할 프록시 대역)
+trusted_proxies = ['127.0.0.0/8', '::1']
 
 [botdetection.ip_limit]
 filter_link_local = false

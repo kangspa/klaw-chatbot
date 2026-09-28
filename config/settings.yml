@@ -1,11 +1,9 @@
-# 기본 설정을 상속하되, 깨진 엔진을 default 엔진 목록에서 제거
+# 기본 설정을 상속하되, 필요한 부분만 덮어쓴다.
 # (boolean true 대신 dict 형태로 작성해야 engines.remove가 동작)
-# - wikidata: SearXNG 2026.5.x + Wikidata API 스키마 변경으로 init 실패 (KeyError: 'name')
 # - ahmia, torch: Tor 네트워크용 엔진. Tor 프록시 없으면 항상 실패
 use_default_settings:
   engines:
     remove:
-      - wikidata
       - ahmia
       - torch
 
@@ -14,11 +12,26 @@ server:
   secret_key: "ultrasecretkey_for_my_local_searxng"
   port: 8080
   bind_address: "0.0.0.0"
-  # bot detection / rate limiter 비활성화 (limiter.toml 없을 때의 WARNING 제거 + 로컬 개발 편의)
+  # bot detection / rate limiter 비활성화 (로컬 개발 편의)
   limiter: false
   public_instance: false
 
 search:
+  # 챗봇 질의가 한국어이므로 엔진에 한국어·한국 지역 결과를 요청한다 (기본 auto는 us-en으로 가는 엔진이 많음)
+  default_lang: "ko"
   formats:
     - html
     - json  # LangChain 연동용
+
+engines:
+  # 네이버: 한국어 법률·뉴스 검색에 가장 유용하지만 기본값이 꺼져 있어 켠다
+  - name: naver
+    disabled: false
+  - name: naver news
+    disabled: false
+  # 2026-09 확인: 첫 검색부터 차단되어 매 요청 오류·지연만 더한다 (DuckDuckGo CAPTCHA, Google CSE unusual traffic)
+  # 다시 쓰려면 disabled: false로 바꾸고 결과의 unresponsive_engines를 확인할 것
+  - name: duckduckgo
+    disabled: true
+  - name: google cse
+    disabled: true
