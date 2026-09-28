@@ -28,7 +28,7 @@ docker compose up -d --build
   "sessionId": "test",
   "isotime": "2026-06-02T20:30:00+09:00",
   "message": "한번 일반적인 대화도 잘 받아쳐주는지 궁금한데, 오늘자 한국에서 발생한 뉴스에 대해서 하나 아무거나 알려줄 수 있어?",
-  "model": "gemini/gemini-2.5-flash-lite"
+  "model": "gemini/gemini-3.5-flash-lite"
 }
 ```
 
@@ -122,7 +122,8 @@ docker compose up -d --build
 # 실행 전 준비
 
 ```bash
-docker compose up -d      # postgres / qdrant / searxng / korean-law-mcp
+docker compose up -d      # postgres / qdrant / searxng / korean-law-mcp / ollama
+uv run python scripts/setup_local_llm.py --apply --pull   # 로컬 모델 GPU 가속 자동 구성 + 모델 받기 (선택)
 uv sync                   # asyncpg, pyjwt 등 의존성 설치
 uv run main.py            # 서버 기동 (startup에서 테이블·Qdrant 컬렉션 자동 생성)
 
@@ -138,7 +139,104 @@ cd vite-project && npm run dev   # 프론트 (http://localhost:5173)
 | `APP_JWT_SECRET` | 액세스 토큰 서명 키. 비워두면 서버 시작마다 임시 키가 생성되어 재시작 시 모든 로그인이 풀린다 |
 | `APP_JWT_TTL_SECONDS` | 토큰 수명(초). 기본 7일 |
 | `ANNEX_OCR_ENABLED` | 이미지 기반 별표(PDF) 응답을 PaddleOCR로 텍스트화하는 후처리. 기본 켜짐, `0`이면 끔 |
-| `CHAT_FALLBACK_MODELS` | 기본 모델 실패(429 등) 시 순차 폴백할 모델 목록 (쉼표 구분, 선택) |
+| `CHAT_FALLBACK_MODELS` | 기본 모델 실패(429 등) 시 순차 폴백할 모델 목록 (쉼표 구분, 선택). DB에 등록·활성화된 모델만 사용 |
+| `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | 각 클라우드 모델 호출용. Gemini 키는 임베딩(대화 기억)에도 쓰이므로 필수 |
+| `LLM_REQUEST_TIMEOUT` | 클라우드 모델 요청 타임아웃(초). 기본 300. 초과 시 재시도·폴백 |
+| `LLM_REGISTRY_TTL` | DB 모델 목록·단가를 다시 읽는 주기(초). 기본 30 |
+| `MCP_AUTH_TOKEN` | korean-law-mcp 접근 토큰. docker-compose가 컨테이너에 주입하고 앱이 Bearer 헤더로 보낸다 (**필수** — 없으면 compose가 기동을 거부) |
+| `CRAWL_MAX_CHARS` | `page_crawl4ai` 결과 최대 길이(자). 기본 6000 — 페이지 전체를 넘기면 호출당 수만 토큰이 된다 |
+
+## LLM 게이트웨이 (`api/llm_gateway`)
+
+모델은 `접두사/모델명` 한 줄로 지정한다. 제공자별 LangChain 채팅 모델을 감싼 `GatewayChatModel`을
+돌려주므로 LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 그대로 쓴다.
+
+| 접두사 | 대상 | 관련 환경 변수 (기본값) |
+| --- | --- | --- |
+| `gemini/` | Google Gemini API | `GEMINI_API_KEY` |
+| `openai/` | OpenAI API | `OPENAI_API_KEY` |
+| `anthropic/` | Anthropic API | `ANTHROPIC_API_KEY` |
+| `ollama/` | Ollama (로컬) | `OLLAMA_BASE_URL` (`http://localhost:11434`), `OLLAMA_NUM_CTX` (`32768`) |
+| `lmstudio/` | LM Studio (OpenAI 호환) | `LMSTUDIO_BASE_URL` (`http://localhost:1234/v1`) |
+| `vllm/` | vLLM (OpenAI 호환) | `VLLM_BASE_URL` (`http://localhost:8000/v1`), `VLLM_API_KEY` |
+| `huggingface/` | HF Inference Providers | `HF_TOKEN` 또는 `HUGGINGFACEHUB_API_TOKEN` |
+
+### 모델·단가 관리 (Postgres)
+
+호출 가능한 모델과 토큰 단가는 Postgres의 `llm_models` / `llm_model_prices` 테이블에서 관리한다.
+서버는 이 목록을 `LLM_REGISTRY_TTL`초(기본 30)마다 다시 읽으므로 **DB를 고치면 재시작·재빌드 없이 반영**된다.
+
+- API로 받은 `model` 값은 DB에 등록·활성화된 모델만 허용한다 (아니면 400). 비우면 `is_default` 모델.
+- 프론트 선택 목록은 `GET /chatbot/models`에서 받아온다 (표시명·그룹·순서 모두 DB 기준).
+- 비용은 호출마다 DB의 **현재 단가**로 계산한다. 모든 제공자가 같은 `llm_model_prices` 테이블을 쓰며,
+  입력 길이에 따라 단가가 달라지는 모델만 구간 행(`above_input_tokens`)을 추가로 둔다.
+  가격이 바뀌면 사람이 DB(또는 seed JSON → sync 스크립트)를 직접 고친다 — 날짜 기준 자동 전환은 없다.
+  적용할 단가가 없는 유료 모델은 0으로 집계하고 경고 로그를 남긴다. 로컬 런타임은 0원.
+- `options`(JSONB)는 제공자 모델 생성자에 그대로 넘어간다 (예: Ollama `{"num_ctx": 32768}`).
+
+초기 데이터는 `api/llm_gateway/seed_models.json`이다. 테이블이 비어 있으면 서버 시작 시 자동으로 채워지고,
+이후 JSON을 고쳤다면 아래 스크립트로 반영한다.
+
+```bash
+uv run python scripts/sync_llm_models.py           # JSON의 모델 추가·갱신 (단가 행 교체), 없는 모델은 유지
+uv run python scripts/sync_llm_models.py --prune   # JSON에 없는 모델까지 삭제
+```
+
+### 로컬 모델 (Docker Ollama)
+
+로컬 모델은 다른 서비스와 마찬가지로 Docker 컨테이너(`ollama`, 포트 11434)로 띄운다.
+이미지는 `docker/ollama/Dockerfile` — Ollama 0.34.4 + CUDA·Vulkan 백엔드 + Mesa 드라이버(ANV/RADV/Dozen)를
+버전 고정으로 담은 단일 이미지다.
+
+GPU 가속은 호스트마다 컨테이너에 넘길 장치가 달라서, **설정 스크립트가 호스트를 감지해
+`docker-compose.override.yml`(docker compose가 자동 병합, git 제외)을 만든다.**
+
+| 감지 결과 | 컨테이너 설정 | Ollama 백엔드 |
+| --- | --- | --- |
+| NVIDIA GPU | GPU 예약 (NVIDIA Container Toolkit) | CUDA |
+| Windows Docker Desktop(WSL2) + Intel/AMD GPU | `/dev/dxg` + `/usr/lib/wsl` 마운트 | Vulkan on D3D12 (Mesa Dozen) |
+| Linux + `/dev/dri` | `/dev/dri` 전달 | Vulkan (Mesa ANV/RADV) |
+| GPU 없음 / macOS | 없음 | CPU |
+
+내장 GPU는 Ollama가 기본으로 제외하므로 NVIDIA가 아닌 경로에서는 `OLLAMA_IGPU_ENABLE=1`을 함께 켠다.
+
+```bash
+uv run python scripts/setup_local_llm.py --apply --pull --verify
+#  감지 → override 생성 → 컨테이너 빌드·재생성 → DB의 활성 로컬 모델 받기 → 가벼운 모델로 GPU 사용률 확인
+```
+
+서버 시작 시에도 로컬 모델 상태(컨테이너 응답·모델 누락·가속 장치)를 점검해 로그(`[local-llm]`)로 알린다.
+받은 모델은 Docker 볼륨 `klaw-chatbot_ollama_models`에 저장된다. Windows 폴더 바인드 마운트는 쓰지 않는다 —
+Docker Desktop에서 GPU 버퍼로 모델을 읽을 때 `read error: Bad address`로 로드가 실패하기 때문이다.
+
+LM Studio / vLLM으로 띄울 경우 DB(또는 seed JSON)의 모델 ID를 `lmstudio/<모델명>`, `vllm/<모델명>`으로
+등록하면 된다 (모델명은 각 서버의 `/v1/models` 응답 기준).
+
+## korean-law-mcp (git 서브모듈)
+
+`korean-law-mcp`는 git 서브모듈로 관리한다. 이 저장소에는 **검증한 특정 커밋**만 기록되므로,
+원격 저장소가 업데이트돼도 명시적으로 올리기 전까지는 도구가 바뀌지 않는다.
+
+```bash
+# 처음 clone 했을 때 (기록된 커밋으로 받기)
+git submodule update --init
+
+# 새 버전으로 올리기 (pull 대신 사용)
+git submodule update --remote korean-law-mcp        # 원격 main 최신 커밋으로 이동
+docker compose up -d --build korean-law-mcp         # 새 코드로 컨테이너 재빌드
+uv run python scripts/check_mcp_tools.py            # 도구 변경·호환성 점검 (문제 있으면 종료 코드 1)
+#   → 문제 없으면 스냅샷 갱신 후 서브모듈 커밋과 함께 커밋
+uv run python scripts/check_mcp_tools.py --update
+git add korean-law-mcp scripts/mcp_tools_snapshot.json && git commit -m "korean-law-mcp vX.Y.Z"
+
+# 되돌리기 (기록된 커밋으로 복귀)
+git submodule update korean-law-mcp
+docker compose up -d --build korean-law-mcp
+```
+
+`check_mcp_tools.py`는 도구 이름·인자·설명의 변경과, 앱이 의존하는 부분(`search_law`의 `query` 인자,
+`[NOT_FOUND]`·`재시도 제안`·`이미지 기반 PDF` 응답 표식)이 남아 있는지를 확인한다.
+응답 문구의 **의미** 변화(새 오류 라벨 등)는 스크립트가 잡지 못하므로 서브모듈의 `CHANGELOG.md`도 함께 확인한다.
 
 ## 법령 검색 안정성 장치
 
@@ -147,8 +245,9 @@ cd vite-project && npm run dev   # 프론트 (http://localhost:5173)
   대화 중 인증 실패 시그니처가 감지되면 재검색을 즉시 중단하고, 사용자에게
   "질문을 바꿔라"가 아니라 **시스템 문제**로 안내한다 (`law_auth.py`).
 - **temperature 에스컬레이션**: 법령 재검색 라운드마다 0.2 → 0.5 → 0.8 → 1.0(이후 반복)으로
-  올려 같은 검색어를 반복 생성하는 고착을 깬다. **Gemini 3+에는 temperature를 지정하지 않는다**
-  (deprecated + `<1.0`은 무한루프·추론저하 경고, LiteLLM 기준).
+  올려 같은 검색어를 반복 생성하는 고착을 깬다. **Gemini 3+ / GPT-5+ / Claude 5+에는 temperature를
+  지정하지 않는다** (Gemini 3+는 deprecated + `<1.0` 무한루프·추론저하 경고, GPT-5+·Claude 5+는
+  `temperature=1` 외 값을 거부 — DB `llm_models.fixed_temperature`).
 - **별표 이미지 OCR**: 도구 응답에 "이미지 기반 PDF" 안내나 `<img>` 조각이 섞여 있으면
   파일을 내려받아 PaddleOCR(한국어)로 텍스트를 추출해 응답 뒤에 덧붙인다 (`tool_annex_ocr.py`).
   실행 디바이스는 런타임에 동적 결정 — CUDA 지원 paddlepaddle + GPU가 보이면 GPU, 아니면 CPU.
