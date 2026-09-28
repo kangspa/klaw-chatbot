@@ -2,27 +2,17 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useSessions } from '../context/SessionsContext'
-import { sendChat, DEFAULT_MODEL } from '../services/chatApi'
+import { sendChat } from '../services/chatApi'
+import { defaultModelId, groupModels, listModels, type ModelOption } from '../services/models'
 import { branchFromMessage, deleteMessage, getSession, regenerateMessage } from '../services/sessions'
 import { localIsoWithOffset } from '../services/time'
 import type { ChatMessage } from '../types'
 
-/**
- * 선택 가능한 모델 목록. value는 LiteLLM 표준 prefix 형식이며 백엔드에 그대로 전달된다.
- * 백엔드는 모델을 화이트리스트로 제한하지 않으므로 여기 추가하면 바로 사용할 수 있다.
- *
+/*
+ * 모델 목록은 백엔드 DB(llm_models)에서 받아온다 (services/models.ts).
  * 법률 검색 노드의 재검색 루프는 모델의 도구 호출(tool calling) 능력에 크게 좌우된다.
  * (도구 호출을 잘 못하면 코드가 재검색을 강제하는 폴백으로 넘어간다 — agent.py의 force_next_search)
  */
-const MODELS = [
-  { value: 'gemini/gemini-3.6-flash', label: 'Gemini 3.6 Flash' },
-  { value: 'gemini/gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite' },
-  { value: 'gemini/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (Preview)' },
-  { value: 'gemini/gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
-  { value: 'openai/gpt-4o-mini', label: 'GPT-4o mini' },
-  { value: 'anthropic/claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
-  { value: 'ollama/llama3.1', label: 'Llama 3.1 (로컬)' },
-]
 
 function uid(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
@@ -43,7 +33,9 @@ export default function ChatPage() {
   const messages = session?.messages ?? []
 
   const [input, setInput] = useState('')
-  const [model, setModel] = useState(DEFAULT_MODEL)
+  // 빈 문자열이면 서버 기본 모델을 쓴다 (목록을 받기 전에 보내는 경우 포함)
+  const [model, setModel] = useState('')
+  const [models, setModels] = useState<ModelOption[]>([])
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -79,6 +71,20 @@ export default function ChatPage() {
     return () => { alive = false }
   }, [session, loading, sessionId, upsert])
 
+  // 선택 가능한 모델 목록을 받아오고, 아직 고른 모델이 없으면 기본 모델을 선택한다
+  useEffect(() => {
+    let alive = true
+    listModels().then(
+      (list) => {
+        if (!alive) return
+        setModels(list)
+        setModel((cur) => (list.some((m) => m.id === cur) ? cur : defaultModelId(list)))
+      },
+      () => { if (alive) setError('모델 목록을 불러오지 못했습니다. 기본 모델로 전송됩니다.') },
+    )
+    return () => { alive = false }
+  }, [])
+
   // ChatHome 예시 질문에서 넘어온 초기 입력 프리필 (1회)
   useEffect(() => {
     const seed = (location.state as { seed?: string } | null)?.seed
@@ -105,7 +111,7 @@ export default function ChatPage() {
     setSending(true)
 
     try {
-      const result = await sendChat({ sessionId, message: text, model })
+      const result = await sendChat({ sessionId, message: text, model: model || undefined })
       // 서버가 Postgres에 저장한 실제 행(id/seq/turnId 포함)으로 교체한다.
       // 이 id들이 있어야 삭제/브랜치/재생성 버튼이 동작한다.
       // 첫 메시지면 백엔드가 세션 제목도 자동 생성하므로 result.session으로 함께 반영한다.
@@ -177,7 +183,7 @@ export default function ChatPage() {
     setBusy({ id: message.id, action: 'regenerate' })
     try {
       const result = await regenerateMessage(
-        sessionId, message.id, localIsoWithOffset(), model,
+        sessionId, message.id, localIsoWithOffset(), model || undefined,
       )
       applyMessages(sessionId, result.messages)
       setNotice('답변을 다시 생성했습니다.')
@@ -221,9 +227,14 @@ export default function ChatPage() {
         </div>
         <label className="chat__model">
           <span>모델</span>
-          <select value={model} onChange={(e) => setModel(e.target.value)} disabled={isBusy}>
-            {MODELS.map((m) => (
-              <option key={m.value} value={m.value}>{m.label}</option>
+          <select value={model} onChange={(e) => setModel(e.target.value)} disabled={isBusy || models.length === 0}>
+            {models.length === 0 && <option value="">불러오는 중…</option>}
+            {groupModels(models).map((g) => (
+              <optgroup key={g.group} label={g.group}>
+                {g.models.map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </label>

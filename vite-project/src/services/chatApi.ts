@@ -7,11 +7,10 @@ import { localIsoWithOffset } from './time'
  * 세션·메시지 CRUD와 삭제/브랜치/재생성은 services/sessions.ts에 있다.
  */
 
-export const DEFAULT_MODEL = 'gemini/gemini-2.5-flash-lite'
-
 export interface ChatRequest {
   sessionId: string
   message: string
+  /** 비우면 서버 기본 모델(DB llm_models.is_default)을 쓴다 */
   model?: string
 }
 
@@ -48,7 +47,7 @@ export async function sendChat(req: ChatRequest): Promise<ChatResult> {
       sessionId: req.sessionId,
       isotime: localIsoWithOffset(),
       message: req.message,
-      model: req.model ?? DEFAULT_MODEL,
+      model: req.model,
     }),
   })
 
