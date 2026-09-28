@@ -19,7 +19,8 @@ from pydantic import BaseModel, Field
 
 from api.auth.deps import get_current_user
 from api.chatbot.functions import graph_ops, qdrant_ops, session_store
-from api.chatbot.functions.chat_runner import describe_exception, run_agent_turn
+from api.chatbot.functions.chat_runner import describe_exception, resolve_model, run_agent_turn
+from api.llm_gateway import ModelNotAvailableError
 
 # 이 라우터의 모든 경로는 로그인 필수. 사용자 id는 요청 파라미터가 아니라 Bearer 토큰에서 가져온다.
 router = APIRouter(prefix="/sessions", dependencies=[Depends(get_current_user)])
@@ -313,7 +314,11 @@ async def regenerate_message(
     if not user_row or not assistant_row:
         raise HTTPException(status_code=400, detail="질문과 답변이 짝을 이루지 않아 재생성할 수 없습니다.")
 
-    model = data.model or assistant_row.get("model")
+    # state를 되돌리기 전에 모델부터 확인한다 (미등록 모델이면 아무것도 바꾸지 않고 400)
+    try:
+        model = await resolve_model(data.model or assistant_row.get("model"))
+    except ModelNotAvailableError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     user_graph_id = await _graph_id_of(sessionId, user_row["id"]) or user_row["id"]
 
     # 1) 이전 실행 결과를 state에서 되돌린다

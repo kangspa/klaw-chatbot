@@ -78,6 +78,43 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_session
     ON chat_messages (session_id, seq);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_turn
     ON chat_messages (session_id, turn_id);
+
+-- 호출 가능한 LLM 모델 목록 (api/llm_gateway가 읽음). 서버 재빌드 없이 모델을 추가·변경하기 위해 DB로 관리한다.
+-- 테이블이 비어 있으면 서버 startup에서 api/llm_gateway/seed_models.json으로 채운다.
+-- JSON을 고친 뒤 DB에 반영하려면: uv run python scripts/sync_llm_models.py
+CREATE TABLE IF NOT EXISTS llm_models (
+    id                TEXT PRIMARY KEY,                 -- '접두사/모델명' (API로 전달되는 값, 예: anthropic/claude-sonnet-5)
+    label             TEXT NOT NULL,                    -- 선택 목록에 보일 이름
+    group_name        TEXT NOT NULL,                    -- 선택 목록 그룹 (Google / OpenAI / Anthropic / 로컬 ...)
+    sort_order        INT NOT NULL DEFAULT 0,           -- 그룹 순서와 그룹 내 순서 모두 이 값 기준
+    enabled           BOOLEAN NOT NULL DEFAULT TRUE,    -- FALSE면 목록에서 숨기고 호출도 거부
+    is_default        BOOLEAN NOT NULL DEFAULT FALSE,   -- 요청에 모델이 없을 때 사용할 기본 모델 (1개)
+    fixed_temperature BOOLEAN NOT NULL DEFAULT FALSE,   -- TRUE면 temperature를 보내지 않음 (Gemini 3+ / GPT-5+ / Claude 5+ 등)
+    options           JSONB NOT NULL DEFAULT '{}'::jsonb, -- 제공자 모델 생성자에 그대로 넘길 추가 인자 (예: {"num_ctx": 32768})
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_models_default
+    ON llm_models (is_default) WHERE is_default;
+
+-- 모델별 현재 토큰 단가 (USD / 1M 토큰). 모든 제공자가 같은 테이블을 쓴다.
+-- 가격이 바뀌면 사람이 직접 이 행을 고친다 (날짜 기준 자동 전환 없음).
+-- 대부분의 모델은 기본 구간 1행이고, 입력 길이에 따라 단가가 달라지는 모델만 구간 행을 추가한다.
+--   above_input_tokens : 호출의 입력 토큰이 이 값을 '초과'하면 적용 (0 = 기본 구간)
+--   예) Gemini 3.1 Pro: 0행(≤200K) + 200000행(>200K), GPT-6: 0행 + 272000행
+CREATE TABLE IF NOT EXISTS llm_model_prices (
+    id                 BIGSERIAL PRIMARY KEY,
+    model_id           TEXT NOT NULL REFERENCES llm_models(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    above_input_tokens INT NOT NULL DEFAULT 0,
+    input_per_mtok       NUMERIC(12, 6) NOT NULL,
+    output_per_mtok      NUMERIC(12, 6) NOT NULL,
+    cache_read_per_mtok  NUMERIC(12, 6),                -- NULL이면 일반 입력 단가로 계산
+    cache_write_per_mtok NUMERIC(12, 6)                 -- NULL이면 일반 입력 단가로 계산
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_model_prices_tier
+    ON llm_model_prices (model_id, above_input_tokens);
 """
 
 

@@ -51,8 +51,8 @@ async def search_entity(
     entity_keys = list(entities.keys())
 
     # 2. 모델 설정 및 구조화된 출력 적용
-    model_name = config["configurable"].get("model", "gemini/gemini-2.5-flash-lite")
-    llm = MODEL_MANAGER.get_model(model_name)
+    model_name = config["configurable"].get("model")
+    llm = await MODEL_MANAGER.get_model(model_name)
     structured_llm = llm.with_structured_output(EntitySelection)
 
     selector_prompt = f"""
@@ -153,8 +153,8 @@ async def search_memory(query: str, state: Annotated[AgentState, InjectedState],
     all_context = f"[전체 흐름]: {long_mem}\n\n"
     all_context += "[최근 사건 요약]:\n" + "\n".join([f"- {s}" for s in short_mem])
 
-    model_name = config["configurable"].get("model", "gemini/gemini-2.5-flash-lite")
-    llm = MODEL_MANAGER.get_model(model_name)
+    model_name = config["configurable"].get("model")
+    llm = await MODEL_MANAGER.get_model(model_name)
     
     extractor_prompt = f"""
     당신은 기억 회상 전문가입니다. [과거 요약 정보]를 바탕으로 질문에 답변하는 데 도움이 될 맥락을 추출하세요.

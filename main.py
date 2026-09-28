@@ -30,6 +30,8 @@ import uvicorn
 from langgraph.checkpoint.memory import MemorySaver
 from api import api_router
 from api.db import close_pool, init_pool
+from api.llm_gateway.store import seed_if_empty as seed_llm_models_if_empty
+from api.load_variable import MODEL_REGISTRY
 from api.chatbot.functions.agent import build_chatbot_agent
 from api.chatbot.functions.law_auth import preflight_law_auth
 from api.chatbot.functions.summary import ensure_conversation_history_collection
@@ -44,7 +46,16 @@ async def lifespan(app: FastAPI):
     #  - Postgres : 사용자에게 보여줄 세션/메시지 원문 (진실 원본)
     #  - Qdrant   : AI가 과거 대화를 의미 검색하기 위한 벡터 (1턴 = 1 point)
     #  - MemorySaver : LangGraph 실행 상태 (같은 thread_id 내 multi-turn 유지, 서버 재시작 시 휘발)
-    await init_pool()
+    pool = await init_pool()
+    # LLM 모델 목록: 테이블이 비어 있을 때만 seed JSON으로 채우고, 레지스트리를 미리 읽어둔다
+    if pool is not None:
+        try:
+            seeded = await seed_llm_models_if_empty(pool)
+            if seeded:
+                print(f"[llm_gateway] llm_models 초기 데이터 {seeded}개 등록 (seed_models.json)")
+        except Exception as e:
+            print(f"[llm_gateway] 모델 초기 데이터 등록 실패: {type(e).__name__}: {e}")
+        await MODEL_REGISTRY.refresh(force=True)
     await ensure_conversation_history_collection()
     # 법제처 Open API 인증 canary 확인 (실패해도 기동은 계속 — 로그로 조기 경보만)
     await preflight_law_auth()

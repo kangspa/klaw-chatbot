@@ -15,9 +15,11 @@ dependencies = [
     "langchain-community>=0.4.1",   # SearxSearchWrapper / SearxSearchResults
     "langgraph>=1.0.10",            # StateGraph + MemorySaver (in-memory 체크포인터)
     "langchain-mcp-adapters>=0.1.0",
-    # --- LLM 게이트웨이 (LiteLLM 단일 경유) ---
-    "litellm>=1.52.0",
-    "langchain-litellm>=0.2.0",
+    # --- LLM 제공자 (api/llm_gateway가 '접두사/모델명'으로 선택) ---
+    "langchain-openai>=1.6.6",          # openai/ + OpenAI 호환 서버(lmstudio/, vllm/, huggingface/)
+    "langchain-anthropic>=1.7.4",       # anthropic/
+    "langchain-google-genai>=4.4.0",    # gemini/ + Gemini 임베딩(google-genai)
+    "langchain-ollama>=1.1.0",          # ollama/
     # --- 벡터 DB ---
     "qdrant-client>=1.17.1",
     # --- 관계형 DB (회원/세션/메시지 저장) ---
@@ -37,3 +39,10 @@ dependencies = [
     "cachetools>=7.0.4",
     "pydantic>=2.10.0",
 ]
+
+[tool.uv]
+# crawl4ai가 필수 의존성으로 선언한 unclecode-litellm(litellm 포크)을 설치하지 않는다.
+# crawl4ai는 LLM 추출 전략·CLI에서만 litellm을 함수 내부에서 지연 import하고,
+# 이 프로젝트는 기본 크롤링(AsyncWebCrawler.arun)만 쓰므로 필요 없다.
+# 불가능한 환경 마커로 override하면 uv가 해당 패키지를 해석·설치 대상에서 제외한다.
+override-dependencies = ["unclecode-litellm; sys_platform == 'never'"]

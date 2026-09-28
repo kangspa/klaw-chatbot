@@ -6,78 +6,21 @@
 configurable.turn_id 를 내려주므로 Qdrant point가 같은 규칙으로 기록/덮어쓰기 된다.
 """
 
-import threading
 import traceback
-from typing import Any, Optional
+from typing import Optional
 
-import litellm
-from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.outputs import ChatGeneration, LLMResult
+
+from api.llm_gateway import CostTrackingCallback
+from api.load_variable import MODEL_REGISTRY
 
 
-class LiteLLMCostCallback(BaseCallbackHandler):
+async def resolve_model(model: Optional[str]) -> str:
     """
-    LiteLLM 내장 가격표(litellm.cost_per_token)를 사용해 호출별 비용을 누적.
-    OpenAI / Anthropic / Gemini / Ollama / HuggingFace 등 LiteLLM이 지원하는
-    모든 모델의 비용을 자동 계산 (Gemini 200K 임계 등 티어 가격도 LiteLLM 측에서 처리).
-
-    각 LLM 호출이 끝날 때 AIMessage.usage_metadata에서 토큰 수,
-    response_metadata에서 모델명을 추출해 비용으로 환산.
+    API로 받은 모델 ID를 DB 등록 모델로 확인한다. 비어 있으면 기본 모델(is_default).
+    미등록·비활성 모델이면 ModelNotAvailableError (엔드포인트에서 400으로 변환).
     """
-
-    def __init__(self, default_model: Optional[str] = None) -> None:
-        super().__init__()
-        self._lock = threading.Lock()
-        self.default_model = default_model  # response_metadata에 model이 없을 때 폴백
-        self.total_input = 0
-        self.total_output = 0
-        self.total_cost = 0.0
-        self.per_call: list[dict[str, Any]] = []
-
-    @staticmethod
-    def _resolve_model(msg: AIMessage, fallback: Optional[str]) -> Optional[str]:
-        # ChatLiteLLM은 response_metadata에 'model_name' 또는 'model'을 넣음 (구현/버전 차이)
-        meta = msg.response_metadata or {}
-        return meta.get("model_name") or meta.get("model") or fallback
-
-    def on_llm_end(self, response: LLMResult, **kwargs) -> None:
-        try:
-            generation = response.generations[0][0]
-        except IndexError:
-            return
-        if not isinstance(generation, ChatGeneration):
-            return
-        msg = generation.message
-        if not isinstance(msg, AIMessage) or not msg.usage_metadata:
-            return
-
-        input_tokens = msg.usage_metadata.get("input_tokens", 0)
-        output_tokens = msg.usage_metadata.get("output_tokens", 0)
-        model_name = self._resolve_model(msg, self.default_model) or "unknown"
-
-        cost = 0.0
-        try:
-            prompt_cost, completion_cost = litellm.cost_per_token(
-                model=model_name,
-                prompt_tokens=input_tokens,
-                completion_tokens=output_tokens,
-            )
-            cost = float(prompt_cost) + float(completion_cost)
-        except Exception as e:
-            # 모델이 LiteLLM 가격 DB에 없거나 모델명 형식이 달라 매칭 실패한 경우
-            print(f"[cost] '{model_name}' 비용 계산 실패: {e}")
-
-        with self._lock:
-            self.total_input += input_tokens
-            self.total_output += output_tokens
-            self.total_cost += cost
-            self.per_call.append({
-                "model": model_name,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "cost_usd": cost,
-            })
+    return (await MODEL_REGISTRY.resolve(model)).id
 
 
 async def run_agent_turn(
@@ -112,7 +55,7 @@ async def run_agent_turn(
 
     input_message = HumanMessage(content=message, id=user_graph_message_id)
 
-    cb = LiteLLMCostCallback(default_model=model)
+    cb = CostTrackingCallback(MODEL_REGISTRY)
     result = await agent.ainvoke(
         {"messages": [input_message]},
         config={**config, "callbacks": [cb]},

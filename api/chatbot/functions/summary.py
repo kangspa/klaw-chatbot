@@ -155,7 +155,7 @@ async def summary_turn(state: AgentState, config: RunnableConfig):
     # 1. 대화쌍이 4개 이상인 경우에만 요약 진행 (가장 오래된 0번 턴 대상)
     if len(turns) > 3:
         # 모델 설정 (기본값 설정)
-        model_name = config["configurable"].get("model", "gemini/gemini-2.5-flash-lite")
+        model_name = config["configurable"].get("model")
 
         # 요약 대상이 되는 0번 턴의 인덱스 추출
         start, end = turns[0]
@@ -258,7 +258,7 @@ async def summary_short(state: AgentState, config: RunnableConfig):
         print(f"--- check_turn {check_turn} 달성: short_memory 요약 진행 ---")
         
         # 모델 설정
-        model_name = config["configurable"].get("model", "gemini/gemini-2.5-flash-lite")
+        model_name = config["configurable"].get("model")
 
         # 2. 요약 대상: 현재 turn_memory에 쌓인 모든 요약문들
         combined_turns = "\n\n".join([f"- {summary}" for summary in turn_memory])
@@ -315,7 +315,7 @@ async def summary_long(state: AgentState, config: RunnableConfig):
         print(f"--- check_short {check_short} 달성: long_memory 통합 요약 진행 ---")
         
         # 모델 설정
-        model_name = config["configurable"].get("model", "gemini/gemini-2.5-flash-lite")
+        model_name = config["configurable"].get("model")
 
         # 2. 요약 대상: 기존 long_memory + 현재 short_memory 리스트
         combined_shorts = "\n\n".join([f"[단락 {i+1}]: {s}" for i, s in enumerate(short_memory)])
@@ -368,7 +368,7 @@ async def update_entity(state: AgentState, config: RunnableConfig):
     if not current_messages:
         return {}
 
-    model_name = config["configurable"].get("model", "gemini/gemini-2.5-flash-lite")
+    model_name = config["configurable"].get("model")
 
     # 기존 메모리 컨텍스트 (JSON 직렬화)
     memory_context = json.dumps(entity_memory, ensure_ascii=False, indent=2)

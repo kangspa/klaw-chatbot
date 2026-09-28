@@ -7,50 +7,22 @@ agent.py(답변 노드)와 summary.py(메모리 노드)가 함께 재사용한�
 import os
 import asyncio
 
-import litellm
-from langchain_core.messages import AIMessage, HumanMessage
-
+from api.llm_gateway import ModelNotAvailableError, is_transient_error
 from api.load_variable import MODEL_MANAGER
 
-
-def _collect_transient_errors():
-    """litellm 버전에 따라 일부 예외가 없을 수 있으므로, 존재하는 것만 모아 튜플로 반환."""
-    names = ("ServiceUnavailableError", "RateLimitError", "InternalServerError",
-             "APIConnectionError", "Timeout")
-    return tuple(e for e in (getattr(litellm.exceptions, n, None) for n in names) if e is not None)
-
-
 # 503(과부하)/429(한도)/500(내부오류)/네트워크·타임아웃 = 일시 오류로 간주해 재시도.
-# (400/401 같은 비일시 오류는 재시도해도 소용없으므로 제외한다.)
-TRANSIENT_ERRORS = _collect_transient_errors()
+# (400/401 같은 비일시 오류는 재시도해도 소용없으므로 제외한다. 판정은 llm_gateway.errors)
 MAX_RETRIES = 3          # 모델당 일시 오류 재시도 횟수(기본)
 BACKOFF_BASE = 1.0       # 지수 백오프 기준(초): 1 → 2 → 4
 
-# 빈 응답(RECITATION/SAFETY 등)이나 일시 오류 시 순차로 시도할 폴백 모델.
-# .env에 CHAT_FALLBACK_MODELS="openai/gpt-4o-mini,anthropic/claude-sonnet-4-5" 형태로 지정.
+# 빈 응답(RECITATION/SAFETY 등)이나 일시 오류 시 순차로 시도할 폴백 모델 (DB llm_models에 등록·활성이어야 함).
+# .env에 CHAT_FALLBACK_MODELS="openai/gpt-6-luna,anthropic/claude-haiku-4-5-20251001" 형태로 지정.
 # (해당 provider API 키가 있어야 실제로 폴백됨. 미지정 시 폴백 없이 처리.)
 FALLBACK_MODELS = [m.strip() for m in os.getenv("CHAT_FALLBACK_MODELS", "").split(",") if m.strip()]
 
 
-# 마지막이 AI 응답인 요청을 거부하는 모델을 위해 덧붙이는 사용자 턴.
-TRAILING_USER_TURN = "위 내용을 바탕으로 시스템 지시에 따라 응답하세요."
-
-
-def ensure_user_turn(messages: list) -> list:
-    """
-    프롬프트가 AI 메시지로 끝나지 않도록 보정한다.
-
-    Gemini 3.x 계열은 마지막 메시지가 model 턴이면 400을 반환한다
-    ("Requests ending with a model turn are not supported"). Gemini 2.5는 허용했다.
-    그런데 이 앱에는 AI 메시지로 끝나는 프롬프트가 정상적으로 존재한다.
-      - summary_turn / update_entity: 대화쌍(Human→AI)을 통째로 넘겨 요약/추출
-      - law_response_agent: 검색 종료 표식(AIMessage)이 마지막에 붙은 상태
-    호출부마다 고치면 빠뜨리기 쉬우므로, 모든 LLM 호출이 지나가는 이 지점에서 한 번에 맞춘다.
-    다른 제공자에는 무해한 지시문이라 분기 없이 적용한다.
-    """
-    if messages and isinstance(messages[-1], AIMessage):
-        return list(messages) + [HumanMessage(content=TRAILING_USER_TURN)]
-    return messages
+# 프롬프트가 AI 메시지로 끝나거나 시스템 메시지만 있는 경우의 보정(Gemini 3.x·Anthropic 400 회피)은
+# 모든 호출이 지나가는 GatewayChatModel이 처리한다 (api/llm_gateway/chat_model.py).
 
 
 def finish_reason_of(msg) -> str:
@@ -97,18 +69,25 @@ async def resilient_ainvoke(model_name: str, available_tools, prompt,
     max_retries=1로 주면 재시도 없이 후보별 1회만 시도(지연 최소화, 메모리 노드용).
     """
     candidates = [model_name] + [m for m in FALLBACK_MODELS if m != model_name]
-    prompt = ensure_user_turn(prompt) if isinstance(prompt, list) else prompt
     last_empty = None
     last_error = None
 
     for cand in candidates:
-        llm = MODEL_MANAGER.get_model(cand, temperature)
+        try:
+            llm = await MODEL_MANAGER.get_model(cand, temperature)
+        except ModelNotAvailableError as e:
+            if cand == model_name:
+                raise   # 요청한 모델 자체가 미등록·비활성이면 폴백하지 않고 알린다
+            print(f"--- [폴백] {e} — 건너뜀 ---")
+            continue
         bound = llm.bind_tools(available_tools) if available_tools else llm
 
         for attempt in range(1, max_retries + 1):
             try:
                 response = await bound.ainvoke(prompt)
-            except TRANSIENT_ERRORS as e:
+            except Exception as e:
+                if not is_transient_error(e):
+                    raise
                 last_error = e
                 wait = BACKOFF_BASE * (2 ** (attempt - 1))
                 print(f"--- [{cand}] 일시 오류 {type(e).__name__} — {attempt}/{max_retries} 재시도 (대기 {wait:.0f}s) ---")
@@ -122,7 +101,7 @@ async def resilient_ainvoke(model_name: str, available_tools, prompt,
                 print(f"--- [{cand}] 빈 응답 (finish_reason={fr}) → 폴백 시도 ---")
                 last_empty = response
                 break  # 다음 폴백 모델로
-            if fr not in ("stop", "STOP", "tool_calls", "length", "unknown"):
+            if fr not in ("stop", "STOP", "tool_calls", "length", "end_turn", "tool_use", "unknown"):
                 print(f"--- [{cand}] finish_reason={fr} ---")
             return response  # 정상 답변 또는 툴 호출
 

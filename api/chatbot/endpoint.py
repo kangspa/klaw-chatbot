@@ -7,11 +7,9 @@ from langchain_core.messages import HumanMessage
 # request.app.state.chatbot_agent에 저장된다 (체크포인터가 이벤트 루프 필요).
 from api.auth.deps import get_current_user
 from api.chatbot.functions import session_store
-from api.chatbot.functions.chat_runner import (
-    LiteLLMCostCallback,  # noqa: F401  (기존 import 경로 호환용 재노출)
-    describe_exception,
-    run_agent_turn,
-)
+from api.chatbot.functions.chat_runner import describe_exception, resolve_model, run_agent_turn
+from api.llm_gateway import ModelNotAvailableError
+from api.load_variable import MODEL_REGISTRY
 from api.db import is_ready as db_is_ready
 
 router = APIRouter()
@@ -22,12 +20,13 @@ class PlanChatRequest(BaseModel):
     isotime: str = Field(..., description="클라이언트가 보낸 오프셋(Offset)이 포함된 ISO 8601 형식의 시간 문자열 (형식:YYYY-MM-DDTHH:mm:ss+HH:mm) (예시:2026-04-07T23:16:04+09:00)")
     message: str = Field(..., description="사용자 입력 메시지")
     model: Optional[str] = Field(
-        default="gemini/gemini-2.5-flash-lite",
+        default=None,
         description=(
-            "사용할 AI 모델 명. LiteLLM 표준 prefix 형식을 사용합니다. "
-            "예: 'gemini/gemini-2.5-flash-lite', 'openai/gpt-4o-mini', "
-            "'anthropic/claude-sonnet-4-5', 'ollama/llama3.1', "
-            "'huggingface/meta-llama/Meta-Llama-3-8B-Instruct'"
+            "사용할 AI 모델 ID. DB(llm_models)에 등록·활성화된 '접두사/모델명'만 허용하며, "
+            "비우면 기본 모델(is_default)을 사용합니다. 목록은 GET /chatbot/models. "
+            "예: 'gemini/gemini-3.5-flash-lite', 'openai/gpt-6-luna', "
+            "'anthropic/claude-sonnet-5', 'ollama/hf.co/google/gemma-4-12B-it-qat-q4_0-gguf', "
+            "'vllm/Qwen/Qwen3.8-27B', 'lmstudio/qwen3.8-27b'"
         ),
     )
 
@@ -41,6 +40,20 @@ class PlanChatResponse(BaseModel):
         default=None,
         description="갱신된 세션 행. 첫 메시지로 제목이 자동 생성되므로 프론트가 이 값으로 목록을 동기화한다.",
     )
+
+
+class ModelOption(BaseModel):
+    id: str = Field(..., description="요청 시 model 값으로 보낼 모델 ID ('접두사/모델명')")
+    label: str = Field(..., description="선택 목록에 보일 이름")
+    group: str = Field(..., description="선택 목록 그룹")
+    isDefault: bool = Field(..., description="기본 모델 여부")
+
+
+@router.get("/models", response_model=list[ModelOption])
+async def list_models(current_user: dict[str, Any] = Depends(get_current_user)):
+    """선택 가능한 모델 목록 (DB llm_models 중 활성 모델, sort_order 순)."""
+    specs = await MODEL_REGISTRY.list_enabled()
+    return [ModelOption(id=s.id, label=s.label, group=s.group, isDefault=s.is_default) for s in specs]
 
 
 @router.post("/chat", response_model=PlanChatResponse)
@@ -69,6 +82,11 @@ async def post_plan_chat(
     user_message_id = session_store.new_id()
     assistant_message_id = session_store.new_id()
 
+    try:
+        model = await resolve_model(data.model)
+    except ModelNotAvailableError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     # 세션 보장 + 소유권 확인 (프론트가 만들기 전에 /chat이 먼저 도달해도 동작하도록)
     session = await session_store.get_session(data.sessionId)
     if session is None:
@@ -83,7 +101,7 @@ async def post_plan_chat(
             session_id=data.sessionId,
             isotime=data.isotime,
             message=data.message,
-            model=data.model,
+            model=model,
             turn_id=turn_id,
             user_graph_message_id=user_message_id,
         )
@@ -104,7 +122,7 @@ async def post_plan_chat(
                 assistant_message_id=assistant_message_id,
                 assistant_content=answer,
                 assistant_graph_id=ai_graph_id,
-                model=data.model,
+                model=model,
             )
         except Exception as e:
             print(f"[Postgres] 대화 저장 실패(무시): {type(e).__name__}: {e}")

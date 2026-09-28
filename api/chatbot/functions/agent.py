@@ -31,7 +31,7 @@ SEARCH_AUTH_ERROR_MARKER = "[법률 검색 시스템 인증 오류]"
 # 재검색 라운드별 temperature 에스컬레이션.
 # 첫 시도는 결정적으로(0.2), 실패가 쌓일수록 탐색적으로(0.5 → 0.8 → 1.0) 올려
 # 같은 검색어를 반복 생성하는 고착을 깬다. 소진 후에는 1.0으로 반복.
-# 주의: Gemini 3+ 는 temperature 지정 자체가 deprecated라 get_model이 무시한다(기본 1.0).
+# 주의: Gemini 3+ / GPT-5+ / Claude 5+ 는 temperature=1 고정이라 get_model이 무시한다(기본 1.0).
 TEMP_SCHEDULE = (0.2, 0.5, 0.8, 1.0)
 
 
@@ -458,7 +458,7 @@ async def classify_intent(state: AgentState, config: RunnableConfig):
     """
     print("--- 1. 분류 노드 (classify_intent) 입장 ---")
     params = config.get("configurable", {})
-    model_name = params.get("model", "gemini/gemini-2.5-flash-lite")
+    model_name = params.get("model")
 
     user_msg = ""
     for msg in reversed(state.get("messages", [])):
@@ -561,7 +561,7 @@ async def general_chat(state: AgentState, config: RunnableConfig):
         if current_usage < get_tool_limit(tool.name):
             available_tools.append(tool)
 
-    model_name = params.get("model", "gemini/gemini-2.5-flash-lite")
+    model_name = params.get("model")
 
     client_iso = params.get("isotime")
     if client_iso:
@@ -670,7 +670,7 @@ async def law_search_agent(state: AgentState, config: RunnableConfig):
         print(f"--- [law_search_agent] 이용 가능한 LAW_TOOLS 사용 한도 소진 → {marker} ---")
         return {"messages": [AIMessage(content=marker)]}
 
-    model_name = params.get("model", "gemini/gemini-2.5-flash-lite")
+    model_name = params.get("model")
 
     # 실패 횟수에 따라 '다음에 시도할 단계'를 지정해준다.
     # 모델이 매번 비슷한 검색어로 재시도하며 5회를 소진하는 것을 막기 위해,
@@ -817,7 +817,7 @@ async def law_response_agent(state: AgentState, config: RunnableConfig):
         if current_usage < get_tool_limit(tool.name):
             available_tools.append(tool)
 
-    model_name = params.get("model", "gemini/gemini-2.5-flash-lite")
+    model_name = params.get("model")
 
     client_iso = params.get("isotime")
     if client_iso:

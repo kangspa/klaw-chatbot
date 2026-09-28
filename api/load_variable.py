@@ -1,15 +1,13 @@
 import os, dotenv
-from cachetools import TTLCache
 from pydantic import BaseModel
 from typing import Annotated, TypedDict, List, Dict, Optional, Any
 
-import litellm
-from langchain_litellm import ChatLiteLLM
-from langchain_core.embeddings import Embeddings
 from langchain_community.utilities import SearxSearchWrapper
 from qdrant_client import AsyncQdrantClient
 
 dotenv.load_dotenv()
+
+from api.llm_gateway import GeminiEmbeddings, ModelManager, ModelRegistry
 
 # DB 환경변수 / Postgres 체크포인터·스토어 / 풀 초기화 코드 전체 제거.
 # 현재 단계 목표: 엔드포인트 + LLM + MCP 도구 연결 확인 (상태는 in-memory만).
@@ -18,97 +16,33 @@ dotenv.load_dotenv()
 SEARX_WRAPPER = SearxSearchWrapper(searx_host="http://localhost:8888")
 
 
-class LiteLLMEmbeddings(Embeddings):
-    """
-    litellm.embedding / aembedding 을 LangChain Embeddings 인터페이스로 래핑.
-    기존 호출부(aembed_documents / aembed_query)를 그대로 사용 가능.
-
-    model 예:
-      - 'gemini/gemini-embedding-001'  (3072차원, 기존 Qdrant 인덱스와 호환)
-      - 'openai/text-embedding-3-small' (1536차원, 재인덱싱 필요)
-      - 'huggingface/sentence-transformers/all-MiniLM-L6-v2' (Inference API)
-    """
-    def __init__(self, model: str):
-        self.model = model
-
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        resp = litellm.embedding(model=self.model, input=texts)
-        return [d["embedding"] for d in resp["data"]]
-
-    def embed_query(self, text: str) -> List[float]:
-        resp = litellm.embedding(model=self.model, input=[text])
-        return resp["data"][0]["embedding"]
-
-    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
-        resp = await litellm.aembedding(model=self.model, input=texts)
-        return [d["embedding"] for d in resp["data"]]
-
-    async def aembed_query(self, text: str) -> List[float]:
-        resp = await litellm.aembedding(model=self.model, input=[text])
-        return resp["data"][0]["embedding"]
-
-
-# 임베딩 모델은 환경변수로 오버라이드 가능.
-# 기본값을 'gemini/gemini-embedding-001' 으로 두면 기존 Qdrant 인덱스(3072차원)와 호환되어 재인덱싱 불필요.
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "gemini/gemini-embedding-001")
-GEMINI_EMBEDDINGS = LiteLLMEmbeddings(model=EMBEDDING_MODEL)
+# 임베딩 모델은 의도적으로 코드에 고정한다 (환경변수로 바꾸지 않는다).
+#
+# 이 값은 단독으로 바꿀 수 있는 설정이 아니라 Qdrant 인덱스와 한 몸이다:
+# conversation_history 컬렉션은 최초 생성 시 이 모델의 출력 차원(3072)으로 고정되고,
+# 이미 존재하는 컬렉션은 차원을 다시 감지하지 않는다(summary.py의 ensure_conversation_history_collection).
+# 따라서 차원이 다른 모델로 바꾸면(예: openai/text-embedding-3-small = 1536) 저장이 조용히 실패한다.
+# 같은 차원의 모델로 바꾸더라도 벡터 공간이 달라 기존 대화 검색 결과가 어긋난다.
+#
+# 교체하려면 코드에서 이 값을 바꾸고 scripts/reset_db.py로 컬렉션을 지워 재생성해야 한다.
+# 즉 '설정 변경'이 아니라 '재인덱싱을 동반한 마이그레이션'이므로 .env에 노출하지 않는다.
+EMBEDDING_MODEL = "gemini-embedding-001"   # 3072차원
+GEMINI_EMBEDDINGS = GeminiEmbeddings(model=EMBEDDING_MODEL)
 
 QDRANT_DB = AsyncQdrantClient(host="localhost", grpc_port=6334, prefer_grpc=True)
 
 
-# "gemini/gemini-3.5-flash-lite" 등에서 Gemini 메이저 버전 추출
-import re as _re
-_GEMINI_VER_RE = _re.compile(r"gemini-(\d+)", _re.IGNORECASE)
+# 채팅 모델은 api/llm_gateway가 '접두사/모델명'(예: 'anthropic/claude-sonnet-5')으로 생성한다.
+# 호출 가능한 모델·단가는 Postgres(llm_models / llm_model_prices)에서 읽어 LLM_REGISTRY_TTL초(기본 30)마다
+# 갱신하므로, DB를 고치면 서버 재시작 없이 반영된다. 모델 인스턴스는 1시간 미사용 시 해제된다.
+async def _load_models_from_db():
+    from api.db import get_pool
+    from api.llm_gateway.store import load_models
+    async with get_pool().acquire() as conn:
+        return await load_models(conn)
 
-
-def is_gemini_3_or_newer(model_name: str) -> bool:
-    m = _GEMINI_VER_RE.search(model_name or "")
-    return bool(m) and int(m.group(1)) >= 3
-
-
-class DynamicModelManager:
-    """
-    LiteLLM 기반 ChatLiteLLM 인스턴스 캐시.
-
-    model_name은 LiteLLM 표준 prefix 그대로 사용:
-      - 'gemini/gemini-2.5-flash-lite'
-      - 'openai/gpt-4o-mini'
-      - 'anthropic/claude-sonnet-4-5'
-      - 'ollama/llama3.1' 또는 'ollama_chat/llama3.1'
-      - 'huggingface/meta-llama/Meta-Llama-3-8B-Instruct'
-
-    API 키는 .env에 등록된 표준 환경 변수명을 LiteLLM이 자동 인식:
-      OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY /
-      OLLAMA_API_KEY / HUGGINGFACEHUB_API_TOKEN
-    """
-    def __init__(self, ttl: int = 3600, maxsize: int = 10):
-        # ttl: 미사용 시 유지 시간(초), maxsize: 최대 저장 모델 개수
-        self.cache = TTLCache(maxsize=maxsize, ttl=ttl)
-
-    def get_model(self, model_name: str, temperature: float = 0.2) -> ChatLiteLLM:
-        # Gemini 3+ 는 temperature/top_p/top_k 를 deprecated 처리하며, 특히
-        # temperature < 1.0 은 무한루프·추론성능 저하를 유발할 수 있다고 LiteLLM이 경고한다.
-        # 따라서 Gemini 3+ 에는 temperature 를 아예 지정하지 않는다(기본값 = 1.0).
-        # (temperature 에스컬레이션은 Gemini 2.x 및 타 provider에서만 실효를 갖는다)
-        if is_gemini_3_or_newer(model_name):
-            cache_key = f"{model_name}_default"
-            if cache_key not in self.cache:
-                print(f"--- [Memory] New model instance: {model_name} (Gemini 3+: temperature 미지정) ---")
-                self.cache[cache_key] = ChatLiteLLM(model=model_name)
-            return self.cache[cache_key]
-
-        cache_key = f"{model_name}_{temperature}"
-        if cache_key not in self.cache:
-            print(f"--- [Memory] New model instance: {model_name} (temperature={temperature}) ---")
-            self.cache[cache_key] = ChatLiteLLM(
-                model=model_name,
-                temperature=temperature,
-            )
-        return self.cache[cache_key]
-
-
-# 글로벌 매니저 인스턴스
-MODEL_MANAGER = DynamicModelManager(ttl=3600) # 1시간 후 자동 해제
+MODEL_REGISTRY = ModelRegistry(_load_models_from_db, ttl=float(os.getenv("LLM_REGISTRY_TTL", "30")))
+MODEL_MANAGER = ModelManager(MODEL_REGISTRY, ttl=3600)
 
 
 # === Korean Law MCP 클라이언트 ===
