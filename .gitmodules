@@ -1,0 +1,4 @@
+[submodule "korean-law-mcp"]
+	path = korean-law-mcp
+	url = https://github.com/chrisryugj/korean-law-mcp.git
+	branch = main
