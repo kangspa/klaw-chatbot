@@ -80,7 +80,9 @@ def handle_tool_error(e: Exception) -> str:
 
 
 # 노드별 독립적 도구 처리를 위한 ToolNode 분리
-local_tool_node = ToolNode(local_tools, handle_tool_errors=handle_tool_error)
+# 같은 로컬 도구를 쓰지만 호출 노드별로 인스턴스를 나눈다 (그래프 구성부 주석 참고)
+general_tool_node = ToolNode(local_tools, handle_tool_errors=handle_tool_error)
+law_response_tool_node = ToolNode(local_tools, handle_tool_errors=handle_tool_error)
 law_tool_node = ToolNode(LAW_TOOLS, handle_tool_errors=handle_tool_error)
 
 # === 도구별 사용 한도 ===
@@ -89,7 +91,9 @@ MCP_TOOL_LIMIT = 5           # korean-law-mcp 도구 공통 기본 한도
 
 LOCAL_TOOL_LIMITS = {
     "web_search": 2,
-    "page_crawl4ai": 999,    # 무제한
+    # 999(사실상 무제한)였을 때 검색 엔진이 막힌 상황에서 응답 노드가 91회 루프를 돌며
+    # 질문 1건에 $3를 쓴 적이 있다. 크롤링 1회 = 컨텍스트 수천 토큰이므로 상한을 둔다.
+    "page_crawl4ai": 5,
     "search_entity": 3,
     "search_history": 3,
     "search_memory": 2,
@@ -100,6 +104,45 @@ MCP_TOOL_LIMIT_OVERRIDES = {
     # (기존 chain_full_research 항목은 노출 목록에 없어 무의미해 제거)
     "legal_research": 5,   # 종합 검색 통합 진입점
 }
+
+
+# 도구 한도를 다 쓴 뒤 도구 없이 최종 답변을 받을 때 덧붙이는 지시
+TOOL_LIMIT_NOTICE = "도구 사용 한도에 도달했습니다. 더 이상 도구를 호출하지 말고, 지금까지 수집한 정보만으로 최종 답변을 작성하세요."
+
+
+def drop_unavailable_tool_calls(response, available_tools):
+    """
+    바인딩하지 않은(=한도를 다 쓴) 도구에 대한 호출을 응답에서 제거한다.
+
+    도구 한도는 '모델에 어떤 도구를 붙이느냐'로만 걸리는데, 모델은 대화 이력에서 본 도구를
+    붙이지 않았어도 호출하는 경우가 있다(특히 Claude). ToolNode는 모든 로컬 도구를 갖고 있어
+    그대로 실행되므로 한도가 무력화되고, 결과가 계속 비면 노드가 끝없이 루프를 돈다.
+    """
+    calls = getattr(response, "tool_calls", None) or []
+    if not calls:
+        return response
+    allowed = {t.name for t in available_tools}
+    kept = [c for c in calls if c.get("name") in allowed]
+    if len(kept) == len(calls):
+        return response
+    dropped = [c.get("name") for c in calls if c.get("name") not in allowed]
+    print(f"--- [도구 한도] 허용되지 않은 도구 호출 제거: {dropped} ---")
+    extra = {k: v for k, v in (response.additional_kwargs or {}).items() if k not in ("tool_calls", "function_call")}
+    return response.model_copy(update={"tool_calls": kept, "additional_kwargs": extra})
+
+
+async def finalize_without_tools(model_name, response, available_tools, final_prompt):
+    """
+    허용되지 않은 도구 호출을 걷어낸 뒤 남은 호출이 없으면, 도구 없이 최종 답변을 한 번 더 받는다.
+    걷어낸 호출에 딸린 텍스트는 "~를 조회하겠습니다" 같은 행동 예고라 답변으로 쓸 수 없으므로
+    텍스트가 있어도 다시 받는다.
+    """
+    if response is None:
+        return None
+    filtered = drop_unavailable_tool_calls(response, available_tools)
+    if filtered is response or filtered.tool_calls:
+        return filtered
+    return await resilient_ainvoke(model_name, [], final_prompt + [HumanMessage(content=TOOL_LIMIT_NOTICE)])
 
 
 def get_tool_limit(tool_name: str) -> int:
@@ -607,6 +650,7 @@ async def general_chat(state: AgentState, config: RunnableConfig):
     final_prompt = [system_prompt, summary_message] + state["messages"]
 
     response = await resilient_ainvoke(model_name, available_tools, final_prompt)
+    response = await finalize_without_tools(model_name, response, available_tools, final_prompt)
 
     if response is None or is_empty_answer(response):
         fr = finish_reason_of(response) if response is not None else "no_response"
@@ -941,6 +985,7 @@ async def law_response_agent(state: AgentState, config: RunnableConfig):
     final_prompt = [system_prompt, summary_message] + state["messages"]
 
     response = await resilient_ainvoke(model_name, tools_for_call, final_prompt)
+    response = await finalize_without_tools(model_name, response, tools_for_call, final_prompt)
 
     if response is None or is_empty_answer(response):
         fr = finish_reason_of(response) if response is not None else "no_response"
@@ -993,7 +1038,12 @@ workflow.add_node("law_response_agent", law_response_agent)
 workflow.add_node("update_law_response_tool_counts", update_law_response_tool_counts)
 
 # ToolNode 등록 (로컬 도구 / MCP 법률 도구 분리)
-workflow.add_node("local_tool_node", local_tool_node)
+# 로컬 도구 노드는 호출한 노드별로 따로 둔다. 하나를 공유하면 그 노드에서 나가는 고정 edge가 둘이 되어
+# 도구 실행 후 general_chat과 law_response_agent가 '동시에' 실행된다 (LangGraph는 고정 edge를 모두 따라감).
+# 그러면 두 노드가 서로의 도구 호출에 결과 없이 대화를 이어 붙여, OpenAI는 400
+# ("No tool output found for function call")으로 거부하고 다른 모델도 중복 호출로 비용이 샌다.
+workflow.add_node("general_tool_node", general_tool_node)
+workflow.add_node("law_response_tool_node", law_response_tool_node)
 workflow.add_node("law_tool_node", law_tool_node)
 
 # 메모리 관리 노드 등록
@@ -1021,8 +1071,8 @@ workflow.add_conditional_edges(
         "__end__": "memory_manager"
     }
 )
-workflow.add_edge("update_general_tool_counts", "local_tool_node")
-workflow.add_edge("local_tool_node", "general_chat")
+workflow.add_edge("update_general_tool_counts", "general_tool_node")
+workflow.add_edge("general_tool_node", "general_chat")
 
 # 2) 법률 검색 흐름 (최대 5회 도구 검색 루프)
 workflow.add_conditional_edges(
@@ -1045,8 +1095,8 @@ workflow.add_conditional_edges(
         "__end__": "memory_manager"
     }
 )
-workflow.add_edge("update_law_response_tool_counts", "local_tool_node")
-workflow.add_edge("local_tool_node", "law_response_agent")
+workflow.add_edge("update_law_response_tool_counts", "law_response_tool_node")
+workflow.add_edge("law_response_tool_node", "law_response_agent")
 
 # 최종 종료 edge
 workflow.add_edge("memory_manager", END)

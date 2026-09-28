@@ -1,3 +1,7 @@
+import asyncio
+import os
+import sys
+
 from api.load_variable import MODEL_MANAGER, AgentState, SEARX_WRAPPER, GEMINI_EMBEDDINGS, QDRANT_DB
 from pydantic import BaseModel, Field
 from typing import Optional, List, Annotated
@@ -23,12 +27,35 @@ async def web_search(query: str):
     # .arun() 메서드를 사용하면 비동기로 실행됩니다.
     return await search_tool.arun(query)
 
+async def _crawl(url: str) -> str:
+    async with AsyncWebCrawler(verbose=False) as crawler:
+        result = await crawler.arun(url=url, bypass_cache=True)
+        text = result.markdown.raw_markdown
+    # 페이지 전체(메뉴·푸터 포함 수만 자)를 그대로 넘기면 크롤링이 반복될 때마다 대화 컨텍스트가 불어나
+    # 호출당 수만 토큰이 되고, 분당 토큰 한도(예: OpenAI TPM)에 걸려 답변 전체가 실패한다.
+    limit = int(os.getenv("CRAWL_MAX_CHARS", "6000"))
+    if len(text) > limit:
+        text = text[:limit] + f"\n\n…(본문이 길어 앞 {limit}자만 표시 — 전체 {len(text)}자)"
+    return text
+
+
+def _crawl_in_proactor_loop(url: str) -> str:
+    loop = asyncio.ProactorEventLoop()
+    try:
+        return loop.run_until_complete(_crawl(url))
+    finally:
+        loop.close()
+
+
 @tool
 async def page_crawl4ai(url: str) -> str:
     """특정 웹페이지의 상세 내용을 크롤링합니다. `web_search` 툴을 통해 찾아낸 url의 내용을 파싱할 때 사용합니다."""
-    async with AsyncWebCrawler(verbose=False) as crawler:
-        result = await crawler.arun(url=url, bypass_cache=True)
-        return result.markdown.raw_markdown
+    # 서버(main.py)는 Windows에서 SelectorEventLoop을 쓰는데, Playwright는 브라우저를 서브프로세스로
+    # 띄우므로 ProactorEventLoop이 필요하다 (Selector에서는 NotImplementedError).
+    # 서버 루프 정책은 그대로 두고, 크롤링만 별도 스레드의 Proactor 루프에서 실행한다.
+    if sys.platform == "win32" and not isinstance(asyncio.get_running_loop(), asyncio.ProactorEventLoop):
+        return await asyncio.to_thread(_crawl_in_proactor_loop, url)
+    return await _crawl(url)
 
 
 class EntitySelection(BaseModel):
