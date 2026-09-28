@@ -55,6 +55,8 @@ MCP_CLIENT = MultiServerMCPClient({
         # 환경변수로 오버라이드 가능 (예: 다른 호스트/포트로 띄울 때)
         "url": os.getenv("MCP_KOREAN_LAW_URL", "http://localhost:3000/mcp"),
         "transport": "streamable_http",
+        # 서버(v4.x)는 외부 바인드 시 토큰 인증을 요구한다 (docker-compose가 같은 값을 컨테이너에 주입)
+        "headers": {"Authorization": f"Bearer {os.getenv('MCP_AUTH_TOKEN', '')}"},
     }
 })
 

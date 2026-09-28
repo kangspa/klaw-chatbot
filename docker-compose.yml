@@ -65,11 +65,15 @@ services:
     container_name: korean-law-mcp
     ports:
       - "3000:3000"               # 호스트(PC) 3000 ↔ 컨테이너 3000 — Python 앱은 http://localhost:3000으로 접근
-    env_file:
-      - ./korean-law-mcp/.env     # LAW_OC 등 환경변수 주입 (gitignore 대상)
     environment:
       - NODE_ENV=production
       - PORT=3000
+      # v4.x부터 0.0.0.0 바인드 시 인증 토큰이 없으면 기동을 거부한다.
+      # 값은 루트 .env의 MCP_AUTH_TOKEN (앱의 MCP 클라이언트도 같은 값을 Bearer 헤더로 보낸다)
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?루트 .env에 MCP_AUTH_TOKEN을 설정하세요}
+      # 법제처 Open API 인증값(OC). 서브모듈 폴더(korean-law-mcp/.env)에 두면 서브모듈을 다시 받을 때
+      # 함께 사라지기 쉬워 루트 .env에서 관리한다.
+      - LAW_OC=${LAW_OC:?루트 .env에 LAW_OC(법제처 Open API 인증값)를 설정하세요}
       # 필요 시 보안/리미트 옵션 (자세한 항목은 korean-law-mcp/CLAUDE.md 참고)
       # - CORS_ORIGIN=http://localhost
       # - RATE_LIMIT_RPM=120

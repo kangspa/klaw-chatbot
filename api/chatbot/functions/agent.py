@@ -14,6 +14,7 @@ from api.chatbot.functions.llm_utils import (
     resilient_ainvoke, is_empty_answer, finish_reason_of, empty_answer_notice,
 )
 from api.chatbot.functions.law_auth import find_auth_failure, looks_like_auth_failure
+from api.llm_gateway.chat_model import content_to_text
 
 # === 도구 분류 및 ToolNode 구성 ===
 # 로컬 도구(직접 정의) 및 MCP 법률 도구(LAW_TOOLS) 분리
@@ -131,6 +132,13 @@ def build_mcp_tool_catalog(mcp_tools, max_desc: int = 220) -> str:
 # ==========================================
 # 법률 검색 이력 추적
 # ==========================================
+# korean-law-mcp가 '데이터를 얻지 못함'을 알릴 때 응답 맨 앞에 붙이는 표식 (src/lib/errors.ts ErrorCodes)
+#   [NOT_FOUND]        : 검색 결과 없음
+#   [UPSTREAM_NO_DATA] : 법제처가 자료를 주지 않음 (부존재 증명 아님 — v4.13+)
+#   [ANNEX_BODY_UNAVAILABLE] : 별표는 찾았으나 본문 텍스트를 얻지 못함
+MCP_FAILURE_LABELS = ("[NOT_FOUND]", "[LAW_NOT_FOUND]", "[UPSTREAM_NO_DATA]", "[ANNEX_BODY_UNAVAILABLE]")
+
+
 def current_turn_messages(messages: list) -> list:
     """
     이번 턴(마지막 HumanMessage 이후)의 메시지만 잘라낸다.
@@ -152,9 +160,11 @@ def summarize_law_search(messages: list) -> tuple[list[dict], bool]:
       any_success : 한 번이라도 실제 법률 정보를 받아왔는지
 
     실패 판정 기준:
-      - ToolNode가 예외를 처리하며 붙인 status == "error"
-      - 또는 본문에 MCP의 '결과 없음' 표식([NOT_FOUND])이 들어있는 경우
+      - ToolNode가 예외를 처리하며 붙인 status == "error" (MCP가 isError로 돌려준 실패 전부)
+      - 또는 응답이 MCP의 실패 표식([NOT_FOUND] 등)으로 '시작'하는 경우
         (도구가 예외 대신 정상 응답으로 '없음'을 알리는 경우까지 커버)
+        본문 중간에 표식이 섞인 것은 실패가 아니다 — legal_research 같은 종합 리서치는
+        일부 하위 검색이 실패해도 나머지 결과와 함께 정상 응답하며, 그 안에 [NOT_FOUND]가 섞인다.
     """
     turn = current_turn_messages(messages)
 
@@ -174,12 +184,13 @@ def summarize_law_search(messages: list) -> tuple[list[dict], bool]:
         if not info:
             continue  # 로컬 도구 호출은 집계 대상이 아님
         tool_name, args = info
-        content = str(m.content or "")
-        # 실패 판정: ToolNode의 error status / MCP의 결과없음 표식 / 법제처 인증 실패 페이지
+        # MCP 도구 응답은 콘텐츠 블록 리스트([{'type': 'text', ...}])로 오므로 텍스트만 이어 붙인다
+        content = content_to_text(m.content)
+        # 실패 판정: ToolNode의 error status / 실패 표식으로 시작하는 응답 / 법제처 인증 실패 페이지
         # (인증 실패는 API가 정상 응답처럼 안내 페이지를 돌려주는 경우가 있어 별도 검사)
         failed = (
             getattr(m, "status", None) == "error"
-            or "[NOT_FOUND]" in content
+            or content.lstrip().startswith(MCP_FAILURE_LABELS)
             or looks_like_auth_failure(content)
         )
 
@@ -706,6 +717,8 @@ async def law_search_agent(state: AgentState, config: RunnableConfig):
 
 [검색 실패 시 대응 — 매우 중요]
 - 도구가 '결과 없음(NOT_FOUND)'이나 오류를 돌려주는 것은 **정상적인 상황**입니다. 포기하지 말고 **검색어를 바꿔 반드시 재시도**하세요.
+- '[UPSTREAM_NO_DATA]'는 법제처가 자료를 **보내주지 않았다**는 뜻이지 그 법령·판례가 **없다는 뜻이 아닙니다.** 같은 ID로 반복하지 말고 search_law 등으로 식별자(mst/lawId)를 다시 확인하거나 다른 도구로 조회하세요.
+- get_law_text의 efYd(시행일자)에는 오늘 날짜를 넣지 마세요. 현행 조문은 efYd 없이 조회합니다.
 - 법제처 API는 공백으로 나뉜 키워드를 **AND 조건**으로 처리합니다. 키워드가 많을수록 결과가 급격히 줄어듭니다.
 - 도구가 '재시도 제안'을 함께 돌려줬다면 그 제안을 최우선으로 따르세요.
 - **이미 시도해서 실패한 검색어를 그대로 반복하지 마세요.** 반드시 다른 검색어를 사용해야 합니다.

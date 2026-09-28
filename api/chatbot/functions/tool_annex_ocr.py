@@ -34,6 +34,8 @@ from urllib.parse import urlparse
 import requests
 from langchain_core.tools import StructuredTool
 
+from api.llm_gateway.chat_model import content_to_text
+
 # 텍스트 안에서 다운로드 가능한 파일 URL(PDF/이미지) 추출.
 # get_annexes 가 "다운로드 링크: <URL>" / "파일 링크: <URL>" 형태로 붙여준다.
 _FILE_URL_RE = re.compile(r"https?://[^\s\"'<>]+\.(?:pdf|png|jpe?g)", re.IGNORECASE)
@@ -243,6 +245,13 @@ def wrap_tool_with_annex_ocr(tool: StructuredTool) -> StructuredTool:
         result = await tool.ainvoke(kwargs)   # 도구 예외는 그대로 전파 (재검색 루프 유지)
         if isinstance(result, str):
             return await _append_ocr_text(result)
+        # langchain-mcp-adapters는 텍스트를 콘텐츠 블록 리스트([{'type': 'text', ...}])로 돌려준다.
+        # 문자열만 처리하면 OCR이 조용히 건너뛰어지므로, 텍스트를 뽑아 보강된 경우에만 교체한다.
+        if isinstance(result, list):
+            text = content_to_text(result)
+            augmented = await _append_ocr_text(text)
+            if augmented != text:
+                return augmented
         return result
 
     return StructuredTool.from_function(
