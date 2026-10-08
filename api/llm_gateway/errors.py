@@ -30,8 +30,8 @@ def is_transient_error(e: BaseException) -> bool:
         if isinstance(cur, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError,
                             asyncio.TimeoutError, ConnectionError)):
             return True
-        # OpenAI/Anthropic SDK의 연결·타임아웃 예외는 상태 코드가 없다
-        if type(cur).__name__ in ("APIConnectionError", "APITimeoutError"):
+        # 연결·타임아웃 예외는 상태 코드가 없을 수 있다 (OpenAI/Anthropic SDK, LiteLLM)
+        if type(cur).__name__ in ("APIConnectionError", "APITimeoutError", "Timeout", "ServiceUnavailableError"):
             return True
         if _status_of(cur) in _TRANSIENT_STATUS:
             return True

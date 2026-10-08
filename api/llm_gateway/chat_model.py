@@ -1,5 +1,5 @@
 """
-제공자별 LangChain 채팅 모델을 감싸, 앱 전체가 같은 형태의 입출력을 쓰도록 맞추는 래퍼.
+LiteLLM 채팅 모델(ChatLiteLLM)을 감싸, 앱 전체가 같은 형태의 입출력을 쓰도록 맞추는 래퍼.
 
 그 자체가 BaseChatModel이므로 LangGraph 노드에서 ainvoke / bind_tools / with_structured_output을
 그대로 쓸 수 있고, 콜백(on_llm_end)도 이 래퍼 기준으로 호출 1건당 한 번만 발생한다.
@@ -13,7 +13,6 @@
     도구 호출(tool_calls)과 Gemini thought signature(additional_kwargs)는 그대로 보존된다.
   - 로컬 추론 모델이 본문에 섞어 보내는 <think>...</think> 제거
   - response_metadata에 finish_reason(제공자별 키 통일)과 gateway_model 기록
-  - 도구 호출 인자 중 자유 형식 객체가 JSON 문자열로 왔으면 객체로 복원 (tool_schema.py — Gemini)
 
 비용 집계: 인스턴스 metadata의 gateway_model이 콜백(on_chat_model_start)으로 전달되어
 CostTrackingCallback이 호출(run_id)마다 어떤 모델의 단가를 쓸지 안다.
@@ -27,8 +26,6 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable, RunnableLambda
 from pydantic import ConfigDict
-
-from api.llm_gateway.tool_schema import free_form_object_params, gemini_tool_specs, restore_json_object_args
 
 # 보정용으로 덧붙이는 사용자 턴. 어느 제공자에도 무해한 지시문이라 분기 없이 적용한다.
 TRAILING_USER_TURN = "위 내용을 바탕으로 시스템 지시에 따라 응답하세요."
@@ -79,9 +76,7 @@ def _finish_reason(msg: AIMessage) -> str:
     return "unknown"
 
 
-def normalize_output(msg: AIMessage, model_id: str,
-                     object_params: Optional[dict[str, frozenset[str]]] = None) -> AIMessage:
-    msg = restore_json_object_args(msg, object_params or {})
+def normalize_output(msg: AIMessage, model_id: str) -> AIMessage:
     text = _THINK_RE.sub("", content_to_text(msg.content))
     meta = {**(msg.response_metadata or {}),
             "finish_reason": _finish_reason(msg),
@@ -98,8 +93,6 @@ class GatewayChatModel(BaseChatModel):
     """제공자별 원본 채팅 모델"""
     runnable: Optional[Runnable] = None
     """도구가 바인딩된 원본 모델. None이면 base를 그대로 호출한다."""
-    object_params: dict[str, frozenset[str]] = {}
-    """바인딩한 도구별 자유 형식 객체 인자 이름 (응답에서 JSON 문자열을 객체로 복원할 대상)"""
 
     @property
     def _llm_type(self) -> str:
@@ -114,10 +107,7 @@ class GatewayChatModel(BaseChatModel):
         kwargs.pop("ls_structured_output_format", None)
         if tool_choice is not None:
             kwargs["tool_choice"] = tool_choice
-        # Gemini는 자유 형식 객체 인자를 이해하지 못하므로 호환 스키마로 바꿔 넘긴다 (tool_schema.py)
-        is_gemini = self.model_id.split("/", 1)[0] == "gemini"
-        bound = self.base.bind_tools(gemini_tool_specs(tools) if is_gemini else tools, **kwargs)
-        return self.model_copy(update={"runnable": bound, "object_params": free_form_object_params(tools)})
+        return self.model_copy(update={"runnable": self.base.bind_tools(tools, **kwargs)})
 
     def with_structured_output(self, schema: Any, *, include_raw: bool = False, **kwargs: Any) -> Runnable:
         """
@@ -134,8 +124,7 @@ class GatewayChatModel(BaseChatModel):
         return self.runnable if self.runnable is not None else self.base
 
     def _wrap(self, msg: AIMessage) -> ChatResult:
-        return ChatResult(generations=[ChatGeneration(
-            message=normalize_output(msg, self.model_id, self.object_params))])
+        return ChatResult(generations=[ChatGeneration(message=normalize_output(msg, self.model_id))])
 
     def _generate(self, messages: list[BaseMessage], stop: Optional[list[str]] = None,
                   run_manager: Optional[CallbackManagerForLLMRun] = None, **kwargs: Any) -> ChatResult:

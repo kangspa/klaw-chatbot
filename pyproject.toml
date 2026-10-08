@@ -16,10 +16,10 @@ dependencies = [
     "langgraph>=1.0.10",            # StateGraph + MemorySaver (in-memory 체크포인터)
     "langchain-mcp-adapters>=0.1.0",
     # --- LLM 제공자 (api/llm_gateway가 '접두사/모델명'으로 선택) ---
-    "langchain-openai>=1.6.6",          # openai/ + OpenAI 호환 서버(lmstudio/, vllm/, huggingface/)
-    "langchain-anthropic>=1.7.4",       # anthropic/
-    "langchain-google-genai>=4.4.0",    # gemini/ + Gemini 임베딩(google-genai)
-    "langchain-ollama>=1.1.0",          # ollama/
+    # openai/ + OpenAI 호환 서버(lmstudio/, vllm/, huggingface/)
+    # anthropic/
+    # gemini/ + Gemini 임베딩(google-genai)
+    # ollama/
     # --- 벡터 DB ---
     "qdrant-client>=1.17.1",
     # --- 관계형 DB (회원/세션/메시지 저장) ---
@@ -38,6 +38,8 @@ dependencies = [
     # --- 유틸 ---
     "cachetools>=7.0.4",
     "pydantic>=2.10.0",
+    "litellm>=1.104.1",
+    "langchain-litellm>=0.11.0",
 ]
 
 [tool.uv]
@@ -45,4 +47,10 @@ dependencies = [
 # crawl4ai는 LLM 추출 전략·CLI에서만 litellm을 함수 내부에서 지연 import하고,
 # 이 프로젝트는 기본 크롤링(AsyncWebCrawler.arun)만 쓰므로 필요 없다.
 # 불가능한 환경 마커로 override하면 uv가 해당 패키지를 해석·설치 대상에서 제외한다.
-override-dependencies = ["unclecode-litellm; sys_platform == 'never'"]
+#
+# pyyaml: paddlex(별표 OCR)가 모든 버전에서 pyyaml==6.0.2로 고정하는데, litellm 1.104+는 >=6.0.3을 요구한다.
+# 6.0.3은 Python 3.14 휠을 추가한 패치 릴리스라 API 변화가 없어 paddlex 고정을 덮어쓴다 (OCR 동작 확인함).
+override-dependencies = [
+    "unclecode-litellm; sys_platform == 'never'",
+    "pyyaml>=6.0.3,<7",
+]

@@ -7,7 +7,7 @@ from qdrant_client import AsyncQdrantClient
 
 dotenv.load_dotenv()
 
-from api.llm_gateway import GeminiEmbeddings, ModelManager, ModelRegistry
+from api.llm_gateway import LiteLLMEmbeddings, ModelManager, ModelRegistry
 
 # DB 환경변수 / Postgres 체크포인터·스토어 / 풀 초기화 코드 전체 제거.
 # 현재 단계 목표: 엔드포인트 + LLM + MCP 도구 연결 확인 (상태는 in-memory만).
@@ -26,14 +26,14 @@ SEARX_WRAPPER = SearxSearchWrapper(searx_host="http://localhost:8888")
 #
 # 교체하려면 코드에서 이 값을 바꾸고 scripts/reset_db.py로 컬렉션을 지워 재생성해야 한다.
 # 즉 '설정 변경'이 아니라 '재인덱싱을 동반한 마이그레이션'이므로 .env에 노출하지 않는다.
-EMBEDDING_MODEL = "gemini-embedding-001"   # 3072차원
-GEMINI_EMBEDDINGS = GeminiEmbeddings(model=EMBEDDING_MODEL)
+EMBEDDING_MODEL = "gemini/gemini-embedding-001"   # 3072차원 (LiteLLM 표기)
+GEMINI_EMBEDDINGS = LiteLLMEmbeddings(model=EMBEDDING_MODEL)
 
 QDRANT_DB = AsyncQdrantClient(host="localhost", grpc_port=6334, prefer_grpc=True)
 
 
 # 채팅 모델은 api/llm_gateway가 '접두사/모델명'(예: 'anthropic/claude-sonnet-5')으로 생성한다.
-# 호출 가능한 모델·단가는 Postgres(llm_models / llm_model_prices)에서 읽어 LLM_REGISTRY_TTL초(기본 30)마다
+# 호출 가능한 모델은 Postgres(llm_models)에서 읽어 LLM_REGISTRY_TTL초(기본 30)마다
 # 갱신하므로, DB를 고치면 서버 재시작 없이 반영된다. 모델 인스턴스는 1시간 미사용 시 해제된다.
 async def _load_models_from_db():
     from api.db import get_pool
