@@ -142,43 +142,44 @@ cd vite-project && npm run dev   # 프론트 (http://localhost:5173)
 | `CHAT_FALLBACK_MODELS` | 기본 모델 실패(429 등) 시 순차 폴백할 모델 목록 (쉼표 구분, 선택). DB에 등록·활성화된 모델만 사용 |
 | `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | 각 클라우드 모델 호출용. Gemini 키는 임베딩(대화 기억)에도 쓰이므로 필수 |
 | `LLM_REQUEST_TIMEOUT` | 클라우드 모델 요청 타임아웃(초). 기본 300. 초과 시 재시도·폴백 |
-| `LLM_REGISTRY_TTL` | DB 모델 목록·단가를 다시 읽는 주기(초). 기본 30 |
+| `LLM_REGISTRY_TTL` | DB 모델 목록을 다시 읽는 주기(초). 기본 30 |
 | `MCP_AUTH_TOKEN` | korean-law-mcp 접근 토큰. docker-compose가 컨테이너에 주입하고 앱이 Bearer 헤더로 보낸다 (**필수** — 없으면 compose가 기동을 거부) |
 | `CRAWL_MAX_CHARS` | `page_crawl4ai` 결과 최대 길이(자). 기본 6000 — 페이지 전체를 넘기면 호출당 수만 토큰이 된다 |
 
 ## LLM 게이트웨이 (`api/llm_gateway`)
 
-모델은 `접두사/모델명` 한 줄로 지정한다. 제공자별 LangChain 채팅 모델을 감싼 `GatewayChatModel`을
-돌려주므로 LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 그대로 쓴다.
+모델은 `접두사/모델명` 한 줄로 지정한다. **호출과 토큰 단가 계산은 LiteLLM**이 맡고, 게이트웨이는
+LiteLLM 채팅 모델을 감싼 `GatewayChatModel`(입출력 보정·비용 집계용 표식)과 DB 모델 목록 관리를 담당한다.
+LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 그대로 쓴다.
 
-| 접두사 | 대상 | 관련 환경 변수 (기본값) |
-| --- | --- | --- |
-| `gemini/` | Google Gemini API | `GEMINI_API_KEY` |
-| `openai/` | OpenAI API | `OPENAI_API_KEY` |
-| `anthropic/` | Anthropic API | `ANTHROPIC_API_KEY` |
-| `ollama/` | Ollama (로컬) | `OLLAMA_BASE_URL` (`http://localhost:11434`), `OLLAMA_NUM_CTX` (`32768`) |
-| `lmstudio/` | LM Studio (OpenAI 호환) | `LMSTUDIO_BASE_URL` (`http://localhost:1234/v1`) |
-| `vllm/` | vLLM (OpenAI 호환) | `VLLM_BASE_URL` (`http://localhost:8000/v1`), `VLLM_API_KEY` |
-| `huggingface/` | HF Inference Providers | `HF_TOKEN` 또는 `HUGGINGFACEHUB_API_TOKEN` |
+| 접두사 | LiteLLM 표기 | 대상 | 관련 환경 변수 (기본값) |
+| --- | --- | --- | --- |
+| `gemini/` | `gemini/` | Google Gemini API | `GEMINI_API_KEY` |
+| `openai/` | `openai/` | OpenAI API | `OPENAI_API_KEY` |
+| `anthropic/` | `anthropic/` | Anthropic API | `ANTHROPIC_API_KEY` |
+| `ollama/` | `ollama_chat/` | Ollama (도구 호출 지원 chat API) | `OLLAMA_BASE_URL` (`http://localhost:11434`), `OLLAMA_NUM_CTX` (`32768`) |
+| `lmstudio/` | `lm_studio/` | LM Studio | `LMSTUDIO_BASE_URL` (`http://localhost:1234/v1`) |
+| `vllm/` | `hosted_vllm/` | vLLM | `VLLM_BASE_URL` (`http://localhost:8000/v1`), `VLLM_API_KEY` |
+| `huggingface/` | `huggingface/` | HF Inference Providers | `HF_TOKEN` 또는 `HUGGINGFACEHUB_API_TOKEN` |
 
-### 모델·단가 관리 (Postgres)
+토큰 단가는 **LiteLLM 가격표**로 계산한다. LiteLLM은 서버 시작 시 최신 가격표를 받아 오고(실패하면 설치된
+버전의 내장 가격표 사용), 캐시 토큰 할인과 장문 입력 구간 단가까지 반영한다. 새 모델·가격 변경을 직접 관리할
+필요가 없다. 가격표에 없는 유료 모델은 0으로 집계하고 경고 로그를 남기며, 로컬 런타임은 0원이다.
 
-호출 가능한 모델과 토큰 단가는 Postgres의 `llm_models` / `llm_model_prices` 테이블에서 관리한다.
+### 모델 목록 관리 (Postgres)
+
+호출 가능한 모델 목록은 Postgres의 `llm_models` 테이블에서 관리한다.
 서버는 이 목록을 `LLM_REGISTRY_TTL`초(기본 30)마다 다시 읽으므로 **DB를 고치면 재시작·재빌드 없이 반영**된다.
 
 - API로 받은 `model` 값은 DB에 등록·활성화된 모델만 허용한다 (아니면 400). 비우면 `is_default` 모델.
 - 프론트 선택 목록은 `GET /chatbot/models`에서 받아온다 (표시명·그룹·순서 모두 DB 기준).
-- 비용은 호출마다 DB의 **현재 단가**로 계산한다. 모든 제공자가 같은 `llm_model_prices` 테이블을 쓰며,
-  입력 길이에 따라 단가가 달라지는 모델만 구간 행(`above_input_tokens`)을 추가로 둔다.
-  가격이 바뀌면 사람이 DB(또는 seed JSON → sync 스크립트)를 직접 고친다 — 날짜 기준 자동 전환은 없다.
-  적용할 단가가 없는 유료 모델은 0으로 집계하고 경고 로그를 남긴다. 로컬 런타임은 0원.
-- `options`(JSONB)는 제공자 모델 생성자에 그대로 넘어간다 (예: Ollama `{"num_ctx": 32768}`).
+- `options`(JSONB)는 LiteLLM 호출 인자로 그대로 넘어간다 (예: Ollama `{"num_ctx": 32768}`).
 
 초기 데이터는 `api/llm_gateway/seed_models.json`이다. 테이블이 비어 있으면 서버 시작 시 자동으로 채워지고,
 이후 JSON을 고쳤다면 아래 스크립트로 반영한다.
 
 ```bash
-uv run python scripts/sync_llm_models.py           # JSON의 모델 추가·갱신 (단가 행 교체), 없는 모델은 유지
+uv run python scripts/sync_llm_models.py           # JSON의 모델 추가·갱신, 없는 모델은 유지
 uv run python scripts/sync_llm_models.py --prune   # JSON에 없는 모델까지 삭제
 ```
 
