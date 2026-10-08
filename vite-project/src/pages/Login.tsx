@@ -12,7 +12,7 @@ export default function Login() {
   const { loginWithGoogle } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const from = (location.state as { from?: string } | null)?.from ?? '/chat'
+  const from = (location.state as { from?: string } | null)?.from ?? '/dashboard'
 
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)

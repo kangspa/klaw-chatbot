@@ -21,7 +21,7 @@ export default function HistoryPage() {
       ) : summaries.length === 0 ? (
         <div className="history__empty">
           <p>{loading ? '불러오는 중…' : '아직 저장된 대화가 없습니다.'}</p>
-          {!loading && <Link className="btn btn--primary" to="/chat">새 세션 시작</Link>}
+          {!loading && <Link className="btn btn--primary" to="/dashboard">대시보드에서 시작하기</Link>}
         </div>
       ) : (
         <div className="history__grid">

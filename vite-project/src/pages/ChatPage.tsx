@@ -85,7 +85,7 @@ export default function ChatPage() {
     return () => { alive = false }
   }, [])
 
-  // ChatHome 예시 질문에서 넘어온 초기 입력 프리필 (1회)
+  // 대시보드 예시 질문에서 넘어온 초기 입력 프리필 (1회)
   useEffect(() => {
     const seed = (location.state as { seed?: string } | null)?.seed
     if (seed && !seededRef.current) {
@@ -210,7 +210,7 @@ export default function ChatPage() {
           {!busyLoading && (
             <>
               <p>삭제되었거나 잘못된 주소일 수 있습니다.</p>
-              <Link className="btn btn--primary" to="/chat">새 세션 시작</Link>
+              <Link className="btn btn--primary" to="/dashboard">대시보드로 가기</Link>
             </>
           )}
         </div>

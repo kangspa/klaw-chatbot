@@ -32,8 +32,8 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   const handleDelete = useCallback(
     async (id: string) => {
       await remove(id)
-      // 지금 보고 있던 세션을 지웠다면 홈으로 빠져나온다
-      if (location.pathname === `/chat/${id}`) navigate('/chat')
+      // 지금 보고 있던 세션을 지웠다면 대시보드로 빠져나온다
+      if (location.pathname === `/chat/${id}`) navigate('/dashboard')
     },
     [remove, navigate, location.pathname],
   )
@@ -52,6 +52,13 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         <button className="btn btn--primary btn--block" onClick={handleNewSession}>
           <span aria-hidden>＋</span> 새 세션
         </button>
+        <NavLink
+          to="/dashboard"
+          className={({ isActive }) => `btn btn--ghost btn--block${isActive ? ' is-active' : ''}`}
+          onClick={onNavigate}
+        >
+          <span aria-hidden>📊</span> 대시보드
+        </NavLink>
         <NavLink
           to="/history"
           className={({ isActive }) => `btn btn--ghost btn--block${isActive ? ' is-active' : ''}`}
