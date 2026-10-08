@@ -84,3 +84,8 @@ class ModelRegistry:
     async def list_enabled(self) -> list[ModelSpec]:
         await self.refresh()
         return sorted((s for s in self._models.values() if s.enabled), key=lambda s: (s.sort_order, s.id))
+
+    async def list_all(self) -> list[ModelSpec]:
+        """비활성 모델 포함 전체 목록 (sort_order 순). 과거 사용 기록의 표시명·색 순서를 정할 때 쓴다."""
+        await self.refresh()
+        return sorted(self._models.values(), key=lambda s: (s.sort_order, s.id))
