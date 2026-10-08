@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage
 from api.auth.deps import get_current_user
 from api.chatbot.functions import session_store
 from api.chatbot.functions.chat_runner import describe_exception, resolve_model, run_agent_turn
+from api.chatbot.functions.insights import schedule_session_summary
 from api.llm_gateway import ModelNotAvailableError
 from api.load_variable import MODEL_REGISTRY
 from api.db import is_ready as db_is_ready
@@ -124,6 +125,8 @@ async def post_plan_chat(
                 assistant_graph_id=ai_graph_id,
                 model=model,
             )
+            # 대시보드용 세션 요약을 백그라운드에서 갱신 (응답은 기다리지 않는다)
+            schedule_session_summary(user_id=user_id, session_id=data.sessionId, turn_id=turn_id)
         except Exception as e:
             print(f"[Postgres] 대화 저장 실패(무시): {type(e).__name__}: {e}")
 

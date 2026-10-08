@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from api.auth.deps import get_current_user
 from api.chatbot.functions import graph_ops, qdrant_ops, session_store
 from api.chatbot.functions.chat_runner import describe_exception, resolve_model, run_agent_turn
+from api.chatbot.functions.insights import schedule_session_summary
 from api.llm_gateway import ModelNotAvailableError
 
 # 이 라우터의 모든 경로는 로그인 필수. 사용자 id는 요청 파라미터가 아니라 Bearer 토큰에서 가져온다.
@@ -349,6 +350,8 @@ async def regenerate_message(
         graph_message_id=ai_graph_id,
         model=model,
     )
+    # 대시보드용 세션 요약을 백그라운드에서 갱신 (응답은 기다리지 않는다)
+    schedule_session_summary(user_id=owner_id, session_id=sessionId, turn_id=turn_id)
 
     return {
         "regenerated": True,

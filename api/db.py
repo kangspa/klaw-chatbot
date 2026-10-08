@@ -79,6 +79,45 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_session
 CREATE INDEX IF NOT EXISTS idx_chat_messages_turn
     ON chat_messages (session_id, turn_id);
 
+-- 세션 요약 (대시보드 표시용). LangGraph 상태의 요약(turn_memory·long_memory)은 서버 재시작 시 사라지므로
+-- 턴이 끝날 때마다 여기에 복사해 둔다. {"overall": 전체 요약 | null, "turns": [최근 턴 요약, ...]}
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS summary JSONB;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS summary_updated_at TIMESTAMPTZ;
+
+-- 턴별 모델 사용량·비용 (대시보드 집계용). 한 턴 안에서 같은 모델 호출은 1행으로 합친다.
+-- 세션을 지워도 이미 발생한 비용 기록은 남기므로 session_id에는 FK를 걸지 않는다 (회원 탈퇴 시에는 삭제).
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id                BIGSERIAL PRIMARY KEY,
+    user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_id        TEXT,
+    turn_id           TEXT,
+    model             TEXT NOT NULL,                     -- llm_models.id ('접두사/모델명')
+    calls             INT NOT NULL,                      -- 이 턴에서 해당 모델을 호출한 횟수 (요약·검색 노드 포함)
+    input_tokens      BIGINT NOT NULL,
+    cache_read_tokens BIGINT NOT NULL DEFAULT 0,
+    output_tokens     BIGINT NOT NULL,
+    cost_usd          NUMERIC(14, 8) NOT NULL,           -- 호출 시점 DB 단가로 계산한 예상 비용
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_usage_user_time ON llm_usage (user_id, created_at);
+
+-- 답변을 위해 실제로 조회된 법령 (대시보드 '자주 조회한 법령'용). 법령 도구 호출이 성공한 것만 기록한다.
+-- 대화에서 파생된 정보라 세션을 지우면 함께 지운다.
+CREATE TABLE IF NOT EXISTS law_lookups (
+    id         BIGSERIAL PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_id TEXT REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    turn_id    TEXT,
+    law_name   TEXT NOT NULL,                            -- 예: 근로기준법
+    article    TEXT,                                     -- 조문 단위 조회일 때 (예: 제60조)
+    tool       TEXT NOT NULL,                            -- 조회에 쓰인 korean-law-mcp 도구
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_law_lookups_user_time ON law_lookups (user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_law_lookups_turn ON law_lookups (session_id, turn_id);
+
 -- 호출 가능한 LLM 모델 목록 (api/llm_gateway가 읽음). 서버 재빌드 없이 모델을 추가·변경하기 위해 DB로 관리한다.
 -- 테이블이 비어 있으면 서버 startup에서 api/llm_gateway/seed_models.json으로 채운다.
 -- JSON을 고친 뒤 DB에 반영하려면: uv run python scripts/sync_llm_models.py

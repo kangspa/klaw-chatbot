@@ -11,6 +11,7 @@ from typing import Optional
 
 from langchain_core.messages import AIMessage, HumanMessage
 
+from api.chatbot.functions.insights import LawLookupCallback, record_turn
 from api.llm_gateway import CostTrackingCallback
 from api.load_variable import MODEL_REGISTRY
 
@@ -56,10 +57,17 @@ async def run_agent_turn(
     input_message = HumanMessage(content=message, id=user_graph_message_id)
 
     cb = CostTrackingCallback(MODEL_REGISTRY)
-    result = await agent.ainvoke(
-        {"messages": [input_message]},
-        config={**config, "callbacks": [cb]},
-    )
+    law_cb = LawLookupCallback()
+    result = None
+    try:
+        result = await agent.ainvoke(
+            {"messages": [input_message]},
+            config={**config, "callbacks": [cb, law_cb]},
+        )
+    finally:
+        # 대시보드 기록 — 답변이 실패해도 이미 발생한 비용은 남긴다
+        await record_turn(user_id=user_id, session_id=session_id, turn_id=turn_id,
+                          cost_cb=cb, law_cb=law_cb, state=result)
     print(f"Per-call breakdown: {cb.per_call}")
     print(f"Total Input: {cb.total_input} / Output: {cb.total_output}")
     print(f"Estimated cost: ${cb.total_cost:.6f}")
