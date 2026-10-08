@@ -6,7 +6,7 @@ Google 로그인 도입으로 chat_sessions.owner_id의 의미가 바뀌었기 �
 이 스크립트는 세 저장소를 모두 비운다.
 
   - Postgres : users / chat_sessions / chat_messages 테이블 DROP 후 새 스키마로 재생성
-               (llm_models / llm_model_prices는 설정 데이터라 지우지 않는다 — scripts/sync_llm_models.py 참고)
+               (llm_models는 설정 데이터라 지우지 않는다 — scripts/sync_llm_models.py 참고)
   - Qdrant   : conversation_history 컬렉션 삭제 (서버 startup에서 자동 재생성됨)
   - LangGraph: MemorySaver라 프로세스 메모리에만 있으므로 서버 재시작으로 비워짐
 

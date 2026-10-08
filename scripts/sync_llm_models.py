@@ -1,10 +1,10 @@
 """
-seed_models.json → Postgres(llm_models / llm_model_prices) 동기화 스크립트.
+seed_models.json → Postgres(llm_models) 동기화 스크립트.
 
 서버는 테이블이 비어 있을 때만 JSON으로 채운다. 이후 JSON을 고쳤다면 이 스크립트로 DB에 반영한다.
 실행 중인 서버는 LLM_REGISTRY_TTL초(기본 30) 안에 바뀐 내용을 자동으로 다시 읽는다 (재시작 불필요).
 
-  - JSON에 있는 모델: 추가하거나 갱신한다. 단가 행은 JSON 내용으로 통째로 교체한다.
+  - JSON에 있는 모델: 추가하거나 갱신한다.
   - JSON에 없는 모델: 기본은 그대로 둔다. --prune을 주면 삭제한다.
 
 사용법:
@@ -62,7 +62,7 @@ async def main() -> None:
         print(f"대상 DB : {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
         print(f"JSON    : {args.file}")
         print(f"  추가 {len(added)}개: {added or '-'}")
-        print(f"  갱신 {len(updated)}개 (단가 행 교체 포함)")
+        print(f"  갱신 {len(updated)}개")
         print(f"  JSON에 없는 모델 {len(missing)}개: {missing or '-'} → {'삭제' if args.prune else '유지'}")
 
         if not args.yes and input("반영하려면 'yes' 입력: ").strip() != "yes":
@@ -75,14 +75,12 @@ async def main() -> None:
                 await conn.execute("DELETE FROM llm_models WHERE id = ANY($1::text[])", missing)
 
         rows = await conn.fetch(
-            """SELECT m.id, m.enabled, m.is_default, count(p.id) AS prices
-                 FROM llm_models m LEFT JOIN llm_model_prices p ON p.model_id = m.id
-                GROUP BY m.id ORDER BY m.sort_order, m.id"""
+            "SELECT id, enabled, is_default FROM llm_models ORDER BY sort_order, id"
         )
         print("\n반영 완료. 현재 DB 모델:")
         for r in rows:
             flags = ("기본 " if r["is_default"] else "") + ("" if r["enabled"] else "비활성")
-            print(f"  - {r['id']}  (단가 {r['prices']}행) {flags}")
+            print(f"  - {r['id']}  {flags}")
     finally:
         await conn.close()
 

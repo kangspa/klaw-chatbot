@@ -3,7 +3,7 @@ DB에 등록된 모델 목록을 메모리에 캐시하는 레지스트리.
 
 API로 전달받은 모델 ID는 여기서 확인한다 — 등록되지 않았거나 비활성인 모델은 거부하고,
 모델이 없으면 기본 모델(is_default)을 쓴다. 캐시는 ttl초마다 DB에서 다시 읽으므로
-DB에서 모델·단가를 바꾸면 서버 재시작 없이 반영된다.
+DB에서 모델 설정을 바꾸면 서버 재시작 없이 반영된다.
 """
 import asyncio
 import hashlib
@@ -11,8 +11,6 @@ import json
 import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
-
-from api.llm_gateway.pricing import PriceRow
 
 
 class ModelNotAvailableError(ValueError):
@@ -29,7 +27,6 @@ class ModelSpec:
     is_default: bool = False
     fixed_temperature: bool = False
     options: dict = field(default_factory=dict)
-    prices: tuple[PriceRow, ...] = ()
 
     @property
     def build_version(self) -> str:

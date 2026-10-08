@@ -8,14 +8,14 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
 from api.llm_gateway.pricing import compute_cost
-from api.llm_gateway.registry import ModelRegistry
+from api.llm_gateway.registry import ModelRegistry  # noqa: F401  (호출부 호환용 인자 타입)
 
 
 class CostTrackingCallback(BaseCallbackHandler):
     """
     게이트웨이 모델은 metadata에 gateway_model(모델 ID)을 싣고 있어 on_chat_model_start에서
     호출(run_id)별 모델을 기억해 두고, on_llm_end에서 usage_metadata(입력·출력·캐시 토큰)에
-    레지스트리(DB llm_model_prices)의 단가를 적용해 비용을 누적한다.
+    LiteLLM 가격표의 단가를 적용해 비용을 누적한다 (pricing.compute_cost).
     gateway_model이 없는 호출(게이트웨이를 거치지 않은 모델)은 집계하지 않는다.
     """
 
@@ -56,11 +56,9 @@ class CostTrackingCallback(BaseCallbackHandler):
             return
 
         usage = msg.usage_metadata
-        # 호출 직전에 레지스트리로 모델을 확인했으므로 캐시에 항상 있다 (동기 콜백이라 DB 조회 불가)
-        spec = self.registry.cached(model_id)
-        cost = compute_cost(model_id, spec.prices if spec else (), usage)
+        cost = compute_cost(model_id, usage)
         if cost is None:
-            print(f"[cost] '{model_id}' 적용할 단가 없음 — 비용 0으로 집계 (llm_model_prices에 추가 필요)")
+            print(f"[cost] '{model_id}'이(가) LiteLLM 가격표에 없음 — 비용 0으로 집계")
             cost = 0.0
 
         details = usage.get("input_token_details") or {}

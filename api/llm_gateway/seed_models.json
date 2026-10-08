@@ -1,6 +1,6 @@
 {
   "_안내": {
-    "용도": "llm_models / llm_model_prices 테이블 초기 데이터. 테이블이 비어 있으면 서버 시작 시 자동으로 채워진다.",
+    "용도": "llm_models 테이블 초기 데이터. 테이블이 비어 있으면 서버 시작 시 자동으로 채워진다.",
     "반영": "이 파일을 고친 뒤 DB에 반영하려면 `uv run python scripts/sync_llm_models.py` (파일에 없는 모델까지 지우려면 --prune).",
     "id": "'접두사/모델명'. API 요청의 model 값과 같다. 접두사: gemini, openai, anthropic, ollama, lmstudio, vllm, huggingface",
     "label / group / sort_order": "선택 목록 표시명, 그룹, 정렬 순서 (그룹 순서는 그룹 내 가장 작은 sort_order 기준)",
@@ -8,7 +8,7 @@
     "is_default": "요청에 모델이 없을 때 쓰는 기본 모델. 하나만 true",
     "fixed_temperature": "true면 temperature를 보내지 않는다 (temperature=1만 허용하는 모델)",
     "options": "제공자 모델 생성자에 넘길 추가 인자 (예: Ollama num_ctx)",
-    "prices": "현재 단가 (USD / 1M 토큰). 가격이 바뀌면 이 값(또는 DB)을 직접 고친다. above_input_tokens: 입력 토큰이 이 값을 초과하면 적용되는 구간 (0=기본 구간, 입력 길이별 단가가 없는 모델은 0 한 행). cache_read/cache_write가 null이면 일반 입력가로 계산. 로컬 모델은 비워두면 0원"
+    "단가": "토큰 단가는 LiteLLM 가격표로 자동 계산한다 (서버 시작 시 최신판을 받아 옴). 여기서 관리하지 않는다."
   },
   "models": [
     {
@@ -19,10 +19,7 @@
       "enabled": true,
       "is_default": true,
       "fixed_temperature": true,
-      "options": {},
-      "prices": [
-        { "above_input_tokens": 0, "input": 0.30, "output": 2.50, "cache_read": 0.03, "cache_write": null }
-      ]
+      "options": {}
     },
     {
       "id": "gemini/gemini-3.8-flash",
@@ -32,10 +29,7 @@
       "enabled": true,
       "is_default": false,
       "fixed_temperature": true,
-      "options": {},
-      "prices": [
-        { "above_input_tokens": 0, "input": 0.75, "output": 3.75, "cache_read": 0.075, "cache_write": null }
-      ]
+      "options": {}
     },
     {
       "id": "gemini/gemini-3.1-pro-preview",
@@ -45,11 +39,7 @@
       "enabled": true,
       "is_default": false,
       "fixed_temperature": true,
-      "options": {},
-      "prices": [
-        { "above_input_tokens": 0, "input": 2.00, "output": 12.00, "cache_read": 0.20, "cache_write": null },
-        { "above_input_tokens": 200000, "input": 4.00, "output": 18.00, "cache_read": 0.40, "cache_write": null }
-      ]
+      "options": {}
     },
     {
       "id": "openai/gpt-6-luna",
@@ -59,11 +49,7 @@
       "enabled": true,
       "is_default": false,
       "fixed_temperature": true,
-      "options": {},
-      "prices": [
-        { "above_input_tokens": 0, "input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.125 },
-        { "above_input_tokens": 272000, "input": 0.20, "output": 0.75, "cache_read": 0.02, "cache_write": 0.25 }
-      ]
+      "options": {}
     },
     {
       "id": "openai/gpt-6-sol",
@@ -73,11 +59,7 @@
       "enabled": true,
       "is_default": false,
       "fixed_temperature": true,
-      "options": {},
-      "prices": [
-        { "above_input_tokens": 0, "input": 2.00, "output": 10.00, "cache_read": 0.20, "cache_write": 2.50 },
-        { "above_input_tokens": 272000, "input": 4.00, "output": 15.00, "cache_read": 0.40, "cache_write": 5.00 }
-      ]
+      "options": {}
     },
     {
       "id": "anthropic/claude-haiku-4-5-20251001",
@@ -87,10 +69,7 @@
       "enabled": true,
       "is_default": false,
       "fixed_temperature": false,
-      "options": {},
-      "prices": [
-        { "above_input_tokens": 0, "input": 1.00, "output": 5.00, "cache_read": 0.10, "cache_write": 1.25 }
-      ]
+      "options": {}
     },
     {
       "id": "anthropic/claude-sonnet-5",
@@ -100,10 +79,7 @@
       "enabled": true,
       "is_default": false,
       "fixed_temperature": true,
-      "options": {},
-      "prices": [
-        { "above_input_tokens": 0, "input": 2.00, "output": 10.00, "cache_read": 0.20, "cache_write": 2.50 }
-      ]
+      "options": {}
     },
     {
       "id": "anthropic/claude-opus-5-5",
@@ -113,10 +89,7 @@
       "enabled": true,
       "is_default": false,
       "fixed_temperature": true,
-      "options": {},
-      "prices": [
-        { "above_input_tokens": 0, "input": 4.00, "output": 20.00, "cache_read": 0.40, "cache_write": 5.00 }
-      ]
+      "options": {}
     },
     {
       "id": "ollama/hf.co/google/gemma-4-E2B-it-qat-q4_0-gguf",
@@ -126,8 +99,9 @@
       "enabled": true,
       "is_default": false,
       "fixed_temperature": false,
-      "options": { "num_ctx": 32768 },
-      "prices": []
+      "options": {
+        "num_ctx": 32768
+      }
     },
     {
       "id": "ollama/hf.co/google/gemma-4-12B-it-qat-q4_0-gguf",
@@ -137,8 +111,9 @@
       "enabled": true,
       "is_default": false,
       "fixed_temperature": false,
-      "options": { "num_ctx": 32768 },
-      "prices": []
+      "options": {
+        "num_ctx": 32768
+      }
     },
     {
       "id": "ollama/qwen3.8:27b-q4_K_M",
@@ -148,8 +123,9 @@
       "enabled": true,
       "is_default": false,
       "fixed_temperature": false,
-      "options": { "num_ctx": 32768 },
-      "prices": []
+      "options": {
+        "num_ctx": 32768
+      }
     }
   ]
 }

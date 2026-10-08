@@ -137,23 +137,8 @@ CREATE TABLE IF NOT EXISTS llm_models (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_models_default
     ON llm_models (is_default) WHERE is_default;
 
--- 모델별 현재 토큰 단가 (USD / 1M 토큰). 모든 제공자가 같은 테이블을 쓴다.
--- 가격이 바뀌면 사람이 직접 이 행을 고친다 (날짜 기준 자동 전환 없음).
--- 대부분의 모델은 기본 구간 1행이고, 입력 길이에 따라 단가가 달라지는 모델만 구간 행을 추가한다.
---   above_input_tokens : 호출의 입력 토큰이 이 값을 '초과'하면 적용 (0 = 기본 구간)
---   예) Gemini 3.1 Pro: 0행(≤200K) + 200000행(>200K), GPT-6: 0행 + 272000행
-CREATE TABLE IF NOT EXISTS llm_model_prices (
-    id                 BIGSERIAL PRIMARY KEY,
-    model_id           TEXT NOT NULL REFERENCES llm_models(id) ON DELETE CASCADE ON UPDATE CASCADE,
-    above_input_tokens INT NOT NULL DEFAULT 0,
-    input_per_mtok       NUMERIC(12, 6) NOT NULL,
-    output_per_mtok      NUMERIC(12, 6) NOT NULL,
-    cache_read_per_mtok  NUMERIC(12, 6),                -- NULL이면 일반 입력 단가로 계산
-    cache_write_per_mtok NUMERIC(12, 6)                 -- NULL이면 일반 입력 단가로 계산
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_model_prices_tier
-    ON llm_model_prices (model_id, above_input_tokens);
+-- 토큰 단가는 LiteLLM 가격표로 계산한다 (api/llm_gateway/pricing.py). 예전 수동 단가 테이블은 정리한다.
+DROP TABLE IF EXISTS llm_model_prices;
 """
 
 
