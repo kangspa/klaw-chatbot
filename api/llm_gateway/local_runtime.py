@@ -53,15 +53,41 @@ def ollama_models(base_url: Optional[str] = None) -> set[str]:
     return names
 
 
-def ollama_log_text(tail: int = 400) -> Optional[str]:
-    """Ollama 컨테이너 로그 끝부분 (docker CLI가 없거나 컨테이너가 없으면 None)."""
+def ollama_log_text(max_lines: int = 400) -> Optional[str]:
+    """
+    Ollama 컨테이너가 마지막으로 시작된 시점부터의 로그 앞부분 (docker CLI가 없거나 컨테이너가 없으면 None).
+
+    추론 장치 감지('inference compute')는 서버 시작 직후에 한 번만 찍힌다. 예전처럼 로그 끝부분(--tail)을 읽으면
+    요청 로그가 쌓일수록 감지 줄이 밀려나 GPU를 쓰고 있어도 'CPU'로 잘못 판단했다. 그래서 컨테이너 시작 시각
+    (restart: always로 재시작되면 그 시각)부터 읽되, 앞의 max_lines줄만 읽고 멈춘다.
+    """
     try:
-        out = subprocess.run(["docker", "logs", "--tail", str(tail), ollama_container()],
-                             capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=10)
+        started = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.StartedAt}}", ollama_container()],
+            capture_output=True, text=True, timeout=10,
+        )
+        if started.returncode != 0 or not started.stdout.strip():
+            return None
+        proc = subprocess.Popen(
+            ["docker", "logs", "--since", started.stdout.strip(), ollama_container()],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,   # Ollama는 로그를 stderr로 쓴다
+            text=True, encoding="utf-8", errors="ignore",
+        )
     except Exception:
         return None
-    text = (out.stdout or "") + (out.stderr or "")   # Ollama는 로그를 stderr로 쓴다
-    return text if out.returncode == 0 and text else None
+    lines: list[str] = []
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            lines.append(line)
+            if len(lines) >= max_lines:
+                break
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+    text = "".join(lines)
+    return text or None
 
 
 _FIELD_RE = re.compile(r'(\w+)=(?:"([^"]*)"|(\S+))')
