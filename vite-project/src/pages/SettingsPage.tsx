@@ -18,7 +18,7 @@ import {
 import { formatWhen } from '../services/time'
 import ApiModelsTab from '../components/settings/ApiModelsTab'
 import CustomModelsCard from '../components/settings/CustomModelsCard'
-import OllamaServerCard from '../components/settings/OllamaServerCard'
+import RuntimeCard from '../components/settings/RuntimeCard'
 import { LocalBadge, ModelSwitch, PullProgress } from '../components/settings/ModelBits'
 
 type ModelTab = ApiProvider | 'local'
@@ -33,7 +33,7 @@ const PULL_POLL_MS = 1500
  *    (components/settings/ApiModelsTab). '로컬' 탭은 등록된 로컬 모델의 다운로드·삭제.
  *  - 커스텀 모델: Ollama 모델명을 입력해 추가·이름 변경·삭제 (components/settings/CustomModelsCard)
  *  - 로컬 저장 공간: 서버에 받아진 모델 용량. 목록에서 빠지고 파일만 남은 모델도 여기서 지운다.
- *  - 로컬 모델 서버: Ollama 버전 변경 (components/settings/OllamaServerCard)
+ *  - 런타임 버전: Ollama·LiteLLM 버전 변경, 둘 다 한 번에도 가능 (components/settings/RuntimeCard)
  *
  * 모델을 꺼도 백엔드 호출은 막히지 않는다 — 선택 목록을 정리하는 용도다.
  * 로컬 모델은 서버(Ollama)에 한 번 받으면 모든 사용자에게 설치된 상태로 보이고, 지우면 모두에게서 지워진다.
@@ -317,7 +317,7 @@ export default function SettingsPage() {
         </section>
       )}
 
-      {!loading && <OllamaServerCard onChanged={reload} />}
+      {!loading && <RuntimeCard onChanged={reload} />}
     </div>
   )
 }

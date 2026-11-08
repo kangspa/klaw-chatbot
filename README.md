@@ -218,9 +218,10 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
 | `POST /chatbot/models/api` | `{modelId}` API 모델 추가 |
 | `POST /chatbot/models/api/delete` | `{modelId}` API 모델 삭제 (기본 제공 모델은 복원 가능, 기본 모델은 불가) |
 | `POST /chatbot/models/api/restore` | `{provider}` 삭제한 기본 제공 모델 되살리기 |
-| `GET /chatbot/ollama` | 실행·설정 Ollama 버전, 가속 장치, 선택 가능한 릴리스, 진행 중인 버전 변경 |
-| `POST /chatbot/ollama/upgrade` | `{version}` Ollama 버전 변경 시작 (다운로드 중이면 409) |
-| `GET /chatbot/ollama/upgrade` | 버전 변경 진행 단계·로그 |
+| `GET /chatbot/runtime` | Ollama·LiteLLM 현재/최신/(LiteLLM) 최신 호환 버전, 릴리스 목록, 진행 중·마지막 작업 |
+| `POST /chatbot/runtime/update` | `{ollama?, litellm?}` 버전 변경 시작 (둘 다 주면 한 번에) |
+| `GET /chatbot/runtime/update` | 진행 단계·로그 |
+| `POST /chatbot/runtime/litellm/check` | `{version}` LiteLLM 버전 호환성 확인 (별도 가상환경) |
 
 초기 데이터는 `api/llm_gateway/seed_models.json`이다. 테이블이 비어 있으면 서버 시작 시 자동으로 채워지고,
 이후 JSON을 고쳤다면 아래 스크립트로 반영한다.
@@ -237,11 +238,26 @@ uv run python scripts/sync_llm_models.py --prune   # JSON에 없는 모델까지
 버전 고정으로 담은 단일 이미지다.
 
 **Ollama 버전**은 루트 `.env`의 `OLLAMA_VERSION` / `OLLAMA_SHA256`(없으면 0.34.4)으로 정해지고, 이미지는
-`klaw-ollama:<버전>` 태그로 버전마다 따로 남는다. 마이 페이지 **로컬 모델 서버 (Ollama)** 에서 버전을 고르면 서버가
+`klaw-ollama:<버전>` 태그로 버전마다 따로 남는다. 마이 페이지 **런타임 버전**의 Ollama 줄에서 버전을 고르면 서버가
 GitHub 릴리스의 SHA-256을 확인 → 이미지 빌드 → 컨테이너 재시작 → 버전·GPU 인식 확인까지 하고, 성공하면 두 값을 `.env`에 적는다.
 확인에 실패하면(응답 없음, 이전엔 잡히던 GPU를 못 잡음 등) 이전 버전 이미지로 자동으로 되돌린다. 받아 둔 모델은 볼륨에 있어 그대로 남는다.
 최신 모델 중에는 새 Ollama가 필요한 것이 있다 (예: `lfm3-omni:2b`는 0.34.4에서 받을 수 없다).
 백엔드가 docker CLI가 있는 호스트에서 실행되어야 한다 (개인 PC 사용 전제 — 별도 권한 확인 없음).
+
+**LiteLLM 버전**도 같은 카드에서 바꾼다. LiteLLM은 백엔드가 직접 쓰는 패키지라 순서가 다르다:
+
+1. 별도 가상환경에서 호환성 확인 (`scripts/check_litellm_compat.py` — 도구 호출 경로, LangChain 연동, 등록 모델 단가).
+   지금 설치된 `mcp`·`langchain-litellm` 버전으로 묶어 확인하므로, 1.106+처럼 mcp 2.3이 필요한 버전은 여기서 걸러진다.
+   결과는 `.runtime/litellm_compat.json`에 캐시하고, 마이 페이지를 열면 현재보다 새 버전 중 **최신 호환 버전**을 백그라운드로 찾는다.
+2. 서버가 `scripts/apply_litellm_update.py`를 **새 콘솔 창**으로 띄우고 스스로 종료한다.
+3. 도우미가 `pyproject.toml`·`uv.lock`을 백업 → `"litellm==<버전>"`으로 고정 → `uv lock`·`uv sync` → 설치 버전·호환성 확인.
+   실패하면 백업을 되돌리고 `uv sync`. 결과를 `.runtime/runtime_job.json`에 적은 뒤 그 창에서 서버를 다시 띄운다.
+4. 화면은 서버가 내려간 동안에도 계속 조회하다가 다시 연결되면 결과를 보여준다.
+
+자동 재시작은 서버를 `uv run python main.py`로 띄웠을 때만 된다 (`api/runtime_control.py`).
+Ollama와 LiteLLM을 함께 바꾸면 **LiteLLM 호환성 확인 → Ollama 변경 → LiteLLM 적용** 순서로 한 작업으로 처리한다
+(LiteLLM이 안 맞으면 아무것도 바꾸지 않고, Ollama가 실패하면 LiteLLM은 건드리지 않는다). 둘 다 새 버전이 있으면
+카드 위에 **한 번에 업데이트** 버튼이 나온다.
 
 GPU 가속은 호스트마다 컨테이너에 넘길 장치가 달라서, **설정 스크립트가 호스트를 감지해
 `docker-compose.override.yml`(docker compose가 자동 병합, git 제외)을 만든다.**

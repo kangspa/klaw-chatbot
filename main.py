@@ -36,6 +36,7 @@ from api.load_variable import MODEL_REGISTRY
 from api.chatbot.functions.agent import build_chatbot_agent
 from api.chatbot.functions.law_auth import preflight_law_auth
 from api.chatbot.functions.summary import ensure_conversation_history_collection
+from api import runtime_control
 
 # .env 파일에서 환경 변수 로드
 dotenv.load_dotenv()
@@ -43,6 +44,8 @@ dotenv.load_dotenv()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ───── startup ─────
+    # 마이 페이지의 LiteLLM 버전 변경이 다른 스레드에서 서버 종료를 요청할 수 있도록 루프를 등록한다
+    runtime_control.bind_loop(asyncio.get_running_loop())
     # 저장소 3종 준비
     #  - Postgres : 사용자에게 보여줄 세션/메시지 원문 (진실 원본)
     #  - Qdrant   : AI가 과거 대화를 의미 검색하기 위한 벡터 (1턴 = 1 point)
@@ -120,4 +123,6 @@ if __name__ == "__main__":
         reload=False,
     )
     server = uvicorn.Server(config)
+    # LiteLLM 버전 변경 시 서버를 내렸다가 같은 방식으로 다시 띄우기 위해 등록한다 (api/runtime_control.py)
+    runtime_control.register(server, ["uv", "run", "python", "main.py"])
     asyncio.run(server.serve())
