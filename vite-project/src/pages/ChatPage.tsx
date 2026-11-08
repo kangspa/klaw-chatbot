@@ -235,7 +235,8 @@ export default function ChatPage() {
             {groupModels(models).map((g) => (
               <optgroup key={g.group} label={g.group}>
                 {g.models.map((m) => {
-                  const reason = unusableReason(m)
+                  // 도구 호출을 못 하는 커스텀 모델은 고를 수는 있지만 법률 검색이 안 된다는 걸 알려준다
+                  const reason = unusableReason(m) ?? (m.supportsTools === false ? '도구 호출 미지원' : null)
                   return (
                     <option key={m.id} value={m.id} disabled={!isUsable(m)}>
                       {reason ? `${m.label} · ${reason}` : m.label}

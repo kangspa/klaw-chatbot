@@ -188,6 +188,13 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
   받을 수 있는 모델은 `llm_models`에 등록된 Ollama 모델로 한정된다.
 - 받은 로컬 모델은 같은 화면의 **삭제** 버튼으로 지워 디스크를 정리한다. 서버 전체에서 지워지며, 목록 항목은 남으므로
   다시 다운로드하면 된다. **로컬 저장 공간** 영역에 전체 사용량과, 목록에서 빠졌는데 파일만 남은 모델이 함께 보인다.
+- **커스텀 모델**: [Ollama 모델 목록](https://ollama.com/search)의 모델명(예: `qwen3:1.7b`)을 입력하고 **추가**를 누르면
+  서버가 받기 시작하고 `llm_models`에 `is_custom`으로 등록된다. 채팅 선택 목록의 '커스텀' 그룹에 보이며, 표시 이름은 ✎로 바꾼다.
+  - 없는 모델명은 Ollama가 몇 초 안에 거절하므로 등록하지 않고 오류만 보여준다. `ollama run …`·ollama.com 주소를 붙여 넣어도 모델명만 쓴다.
+  - 도구 호출(tools)을 지원하지 않는 모델은 경고를 표시한다. 이 챗봇은 법령·웹 검색에 도구를 쓰므로 답변이 실패할 수 있다.
+  - 최신 모델 중에는 더 새 Ollama가 필요한 것이 있다 (예: `lfm3-omni:2b`). 이때는 `docker/ollama/Dockerfile`의 버전을 올려야 한다.
+  - 삭제는 받는 중이면 취소하고, 받아져 있으면 파일까지 지운 뒤 목록에서 뺀다.
+  - `sync_llm_models.py --prune`은 커스텀 모델을 지우지 않는다.
 
 | API | 용도 |
 | --- | --- |
@@ -195,6 +202,9 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
 | `PUT /chatbot/models/preference` | `{modelId, enabled}` 사용 / 사용 안 함 |
 | `POST /chatbot/models/pull` | `{modelId}` 로컬 모델 다운로드 시작 |
 | `GET /chatbot/models/pulls` | 모델별 다운로드 진행 상태 |
+| `POST /chatbot/models/custom` | `{name, label?}` 커스텀 모델 추가 (없는 모델이면 400) |
+| `PATCH /chatbot/models/custom` | `{modelId, label}` 커스텀 모델 표시 이름 변경 |
+| `POST /chatbot/models/custom/delete` | `{modelId}` 다운로드 취소·파일 삭제 후 커스텀 목록에서 제거 |
 | `GET /chatbot/models/storage` | Ollama에 받아진 모델 전체와 용량 (`registered: false` = 파일만 남은 모델) |
 | `POST /chatbot/models/delete` | `{modelId}` 로컬 모델 파일 삭제 (받는 중이면 409) |
 

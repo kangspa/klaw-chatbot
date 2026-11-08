@@ -13,6 +13,7 @@
 """
 import asyncio
 import json
+import re
 import time
 from dataclasses import asdict, dataclass
 from typing import Optional
@@ -30,6 +31,55 @@ def ollama_name(model_id: str) -> Optional[str]:
     """'ollama/이름' → Ollama 모델 이름. Ollama 모델이 아니면 None."""
     provider, name = split_model_id(model_id)
     return name if provider in PULLABLE_PROVIDERS else None
+
+
+# Ollama 모델명: 'lfm3-omni:2b', 'qwen3.8:27b-q4_K_M', 'hf.co/google/gemma-4-12B-it-qat-q4_0-gguf' 등
+_OLLAMA_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]*(/[A-Za-z0-9._\-]+)*(:[A-Za-z0-9._\-]+)?$")
+# 사용자가 Ollama 사이트에서 그대로 복사해 붙여 넣는 앞부분
+_NAME_PREFIXES = ("ollama run ", "ollama pull ", "https://ollama.com/library/", "https://ollama.com/", "ollama.com/library/")
+
+
+def normalize_ollama_name(raw: str) -> str:
+    """
+    입력한 모델명을 Ollama 모델명으로 정리한다. 형식이 맞지 않으면 ValueError.
+    'ollama run lfm3-omni:2b'나 ollama.com 주소를 붙여 넣어도 모델명만 남긴다.
+    """
+    name = (raw or "").strip()
+    lowered = name.lower()
+    for prefix in _NAME_PREFIXES:
+        if lowered.startswith(prefix):
+            name = name[len(prefix):].strip()
+            break
+    if not name:
+        raise ValueError("모델명을 입력하세요. 예: lfm3-omni:2b")
+    if len(name) > 200 or ".." in name or not _OLLAMA_NAME_RE.match(name):
+        raise ValueError(f"Ollama 모델명 형식이 아닙니다: {raw!r} (예: lfm3-omni:2b, qwen3.8:27b-q4_K_M)")
+    return name
+
+
+async def ollama_capabilities(name: str, timeout: float = 5.0) -> Optional[list[str]]:
+    """Ollama /api/show의 capabilities (예: ['completion', 'tools', 'vision']). 확인할 수 없으면 None."""
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(f"{ollama_base_url()}/api/show", json={"model": name})
+            resp.raise_for_status()
+            caps = resp.json().get("capabilities")
+    except Exception:
+        return None
+    return list(caps) if isinstance(caps, list) else None
+
+
+def friendly_pull_error(message: str, name: str) -> str:
+    """Ollama 오류 문구를 사용자 안내로 바꾼다."""
+    if "requires a newer version of Ollama" in message:
+        # 최신 모델은 새 Ollama가 필요하다 (레지스트리가 412로 거절). 컨테이너 Ollama 버전을 올려야 받을 수 있다.
+        from api.llm_gateway.local_runtime import ollama_version
+        current = ollama_version() or "알 수 없음"
+        return (f"'{name}' 모델은 더 새 버전의 Ollama가 필요합니다 (서버 Ollama {current}). "
+                "docker/ollama/Dockerfile의 Ollama 버전을 올린 뒤 컨테이너를 다시 빌드하세요.")
+    if "file does not exist" in message or "not found" in message.lower():
+        return f"Ollama에서 '{name}' 모델을 찾을 수 없습니다. 모델명과 태그를 확인하세요 (예: lfm3-omni:2b)."
+    return f"'{name}' 모델을 받지 못했습니다: {message}"
 
 
 async def ollama_inventory(timeout: float = 3.0) -> Optional[list[dict]]:
@@ -116,6 +166,8 @@ class PullManager:
     def __init__(self) -> None:
         self._states: dict[str, PullState] = {}
         self._tasks: dict[str, asyncio.Task] = {}
+        # 첫 레이어를 받기 시작했거나(=모델이 존재함) 끝났을 때(완료·실패) 켜지는 신호
+        self._started: dict[str, asyncio.Event] = {}
 
     def start(self, model_id: str) -> PullState:
         state = self._states.get(model_id)
@@ -126,8 +178,31 @@ class PullManager:
             raise ValueError(f"다운로드할 수 있는 로컬 모델이 아닙니다: {model_id}")
         state = PullState(started_at=time.time(), message="다운로드 준비 중")
         self._states[model_id] = state
+        self._started[model_id] = asyncio.Event()
         self._tasks[model_id] = asyncio.create_task(self._run(model_id, name, state))
         return state
+
+    async def wait_started(self, model_id: str, timeout: float = 20.0) -> Optional[PullState]:
+        """
+        다운로드가 실제로 시작될 때까지(또는 실패할 때까지) 기다린다.
+        Ollama는 없는 모델이면 'pulling manifest' 직후 오류를 보내므로, 이걸로 모델명이 맞는지 판별한다.
+        시간 안에 결론이 안 나면 그때 상태를 그대로 돌려준다 (느린 네트워크 — 받는 중으로 본다).
+        """
+        event = self._started.get(model_id)
+        if event is not None:
+            try:
+                await asyncio.wait_for(event.wait(), timeout)
+            except asyncio.TimeoutError:
+                pass
+        return self._states.get(model_id)
+
+    def cancel(self, model_id: str) -> bool:
+        """받는 중인 다운로드를 멈춘다. 받다 만 파일은 Ollama가 다음 시작 시 정리한다 (OLLAMA_NOPRUNE 기본값)."""
+        task = self._tasks.get(model_id)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
 
     def get(self, model_id: str) -> Optional[PullState]:
         return self._states.get(model_id)
@@ -161,19 +236,31 @@ class PullManager:
                             layers[digest] = (event.get("completed", 0) or 0, event["total"])
                             state.completed = sum(c for c, _ in layers.values())
                             state.total = sum(t for _, t in layers.values())
+                            self._signal_started(model_id)
                         if event.get("status") == "success":
                             state.status = "done"
             if state.status != "done":
                 raise RuntimeError("Ollama가 완료 신호 없이 연결을 닫았습니다.")
             state.completed = state.total
             print(f"[local_models] 다운로드 완료: {name}")
+        except asyncio.CancelledError:
+            state.status = "error"
+            state.message = "다운로드를 취소했습니다."
+            print(f"[local_models] 다운로드 취소: {name}")
         except Exception as e:
             state.status = "error"
-            state.message = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+            state.message = str(e) if isinstance(e, RuntimeError) and str(e) else (
+                f"{type(e).__name__}: {e}" if str(e) else type(e).__name__)
             print(f"[local_models] 다운로드 실패: {name} — {state.message}")
         finally:
             state.finished_at = time.time()
             self._tasks.pop(model_id, None)
+            self._signal_started(model_id)
+
+    def _signal_started(self, model_id: str) -> None:
+        event = self._started.get(model_id)
+        if event is not None and not event.is_set():
+            event.set()
 
 
 PULL_MANAGER = PullManager()

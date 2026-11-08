@@ -45,6 +45,12 @@ export interface ModelOption {
   pull: PullState | null
   /** 설치된 로컬 모델의 디스크 크기 (바이트) */
   sizeBytes: number | null
+  /** 마이 페이지에서 사용자가 추가한 커스텀 모델인지 */
+  custom: boolean
+  /** Ollama 모델명 (Ollama 모델만) */
+  ollamaName: string | null
+  /** 도구 호출 지원 여부 (설치된 커스텀 모델만 확인, 모르면 null). false면 법률 검색을 할 수 없다 */
+  supportsTools: boolean | null
 }
 
 /** 서버(Ollama)에 받아져 있는 모델 하나 */
@@ -104,6 +110,33 @@ export async function getLocalStorage(): Promise<LocalStorage> {
 /** POST /chatbot/models/delete — 로컬 모델 파일 삭제 (서버 전체에서 지워진다) */
 export async function deleteLocalModel(modelId: string): Promise<{ deleted: boolean; sizeBytes: number }> {
   return apiFetch('/chatbot/models/delete', {
+    method: 'POST',
+    body: JSON.stringify({ modelId }),
+  })
+}
+
+/**
+ * POST /chatbot/models/custom — Ollama 모델명으로 커스텀 모델 추가.
+ * 서버가 다운로드를 시작해 모델이 있는지 확인한 뒤 등록한다 (없는 모델이면 400). 나머지 다운로드는 백그라운드.
+ */
+export async function addCustomModel(name: string, label?: string): Promise<{ modelId: string; label: string }> {
+  return apiFetch('/chatbot/models/custom', {
+    method: 'POST',
+    body: JSON.stringify({ name, label: label || null }),
+  })
+}
+
+/** PATCH /chatbot/models/custom — 커스텀 모델 표시 이름 변경 */
+export async function renameCustomModel(modelId: string, label: string): Promise<void> {
+  await apiFetch<void>('/chatbot/models/custom', {
+    method: 'PATCH',
+    body: JSON.stringify({ modelId, label }),
+  })
+}
+
+/** POST /chatbot/models/custom/delete — 다운로드 취소·파일 삭제 후 커스텀 목록에서 제거 */
+export async function deleteCustomModel(modelId: string): Promise<{ deleted: boolean; sizeBytes: number }> {
+  return apiFetch('/chatbot/models/custom/delete', {
     method: 'POST',
     body: JSON.stringify({ modelId }),
   })

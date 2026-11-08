@@ -8,9 +8,15 @@
   GET  /chatbot/models/storage     Ollama에 받아진 모델 전체와 용량 (목록에서 빠지고 파일만 남은 모델 포함)
   POST /chatbot/models/delete      로컬 모델 파일 삭제 (디스크 정리)
 
+  커스텀 모델 (사용자가 Ollama 모델명을 입력해 추가 — llm_models에 is_custom으로 등록되어 다른 모델과 똑같이 쓰인다)
+  POST  /chatbot/models/custom         {name, label?} 모델명이 Ollama에 있는지 다운로드를 시작해 확인한 뒤 등록
+  PATCH /chatbot/models/custom         {modelId, label} 표시 이름 변경
+  POST  /chatbot/models/custom/delete  {modelId} 다운로드 취소·파일 삭제 후 등록 해제
+
 사용 여부는 프론트의 선택 목록에만 반영한다. 백엔드는 꺼진 모델의 호출을 막지 않으며,
 로컬 모델이 아직 없으면 채팅 호출 시 안내 오류(400)만 돌려준다 (chat_runner.resolve_model).
 """
+import asyncio
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,13 +24,17 @@ from pydantic import BaseModel, Field
 
 from api.auth.deps import get_current_user
 from api.chatbot.functions import model_prefs
-from api.db import is_ready as db_is_ready
+from api.db import get_pool, is_ready as db_is_ready
+from api.llm_gateway import store
 from api.llm_gateway.local_models import (
     PULL_MANAGER,
     delete_ollama_model,
+    friendly_pull_error,
     installed_ollama_models,
     installed_size,
     is_installed,
+    normalize_ollama_name,
+    ollama_capabilities,
     ollama_inventory,
     ollama_name,
 )
@@ -50,6 +60,12 @@ class ModelOption(BaseModel):
     )
     pull: Optional[dict[str, Any]] = Field(default=None, description="진행 중·최근 다운로드 상태")
     sizeBytes: Optional[int] = Field(default=None, description="설치된 로컬 모델의 디스크 크기")
+    custom: bool = Field(default=False, description="마이 페이지에서 사용자가 추가한 커스텀 모델인지")
+    ollamaName: Optional[str] = Field(default=None, description="Ollama 모델명 (Ollama 모델만)")
+    supportsTools: Optional[bool] = Field(
+        default=None,
+        description="도구 호출 지원 여부 (설치된 커스텀 모델만 확인). false면 법률 검색 도구를 쓸 수 없어 답변이 실패한다",
+    )
 
 
 class PreferenceRequest(BaseModel):
@@ -59,6 +75,16 @@ class PreferenceRequest(BaseModel):
 
 class PullRequest(BaseModel):
     modelId: str
+
+
+class CustomAddRequest(BaseModel):
+    name: str = Field(..., description="Ollama 모델명 (예: lfm3-omni:2b). 'ollama run …'·ollama.com 주소를 붙여 넣어도 된다")
+    label: Optional[str] = Field(default=None, description="표시 이름. 비우면 모델명")
+
+
+class CustomRenameRequest(BaseModel):
+    modelId: str
+    label: str
 
 
 class DeleteRequest(BaseModel):
@@ -112,9 +138,15 @@ async def list_models(current_user: dict[str, Any] = Depends(get_current_user)):
         elif local:
             status = "unmanaged"
         size = installed_size(name, installed) if (name is not None and installed and status == "installed") else None
+        supports_tools = None
+        if s.is_custom and status == "installed":
+            # 커스텀 모델은 처음 보는 모델이라 도구 호출 지원을 확인해 경고한다 (등록 모델은 검증을 거쳐 들어왔다)
+            caps = await ollama_capabilities(name)
+            supports_tools = None if caps is None else "tools" in caps
         out.append(ModelOption(
             id=s.id, label=s.label, group=s.group, isDefault=s.is_default,
             enabled=s.id not in disabled, local=local, localStatus=status, pull=pull, sizeBytes=size,
+            custom=s.is_custom, ollamaName=name, supportsTools=supports_tools,
         ))
     return out
 
@@ -209,3 +241,103 @@ async def delete_local_model(data: DeleteRequest, current_user: dict[str, Any] =
     PULL_MANAGER.forget(data.modelId)
     print(f"[local_models] 삭제: {name} ({size / 1e9:.1f} GB, 요청: {current_user.get('email')})")
     return {"modelId": data.modelId, "deleted": True, "sizeBytes": size}
+
+
+# ────────────────────────── 커스텀 모델 ──────────────────────────
+def _require_db() -> None:
+    if not db_is_ready():
+        raise HTTPException(status_code=503, detail="Postgres에 연결되어 있지 않아 커스텀 모델을 관리할 수 없습니다.")
+
+
+async def _custom_spec(model_id: str):
+    spec = next((s for s in await MODEL_REGISTRY.list_all() if s.id == model_id), None)
+    if spec is None or not spec.is_custom:
+        raise HTTPException(status_code=404, detail=f"커스텀 모델이 아닙니다: {model_id}")
+    return spec
+
+
+def _clean_label(label: Optional[str], fallback: str) -> str:
+    label = " ".join((label or "").split()) or fallback
+    if len(label) > 60:
+        raise HTTPException(status_code=400, detail="표시 이름은 60자 이하로 입력하세요.")
+    return label
+
+
+@router.post("/custom", status_code=201)
+async def add_custom(data: CustomAddRequest, current_user: dict[str, Any] = Depends(get_current_user)):
+    """
+    Ollama 모델명으로 커스텀 모델을 추가한다.
+
+    Ollama에는 '이 모델이 있는가'만 묻는 API가 없어서, 다운로드를 바로 시작하고 첫 응답을 기다린다.
+    없는 모델이면 Ollama가 몇 초 안에 오류를 보내므로 등록하지 않고 400을 돌려준다 (오타로 빈 항목이 남지 않게).
+    받기 시작했으면 등록하고, 나머지 다운로드는 백그라운드로 계속된다.
+    """
+    _require_db()
+    try:
+        name = normalize_ollama_name(data.name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    model_id = f"ollama/{name}"
+    label = _clean_label(data.label, name)
+
+    if any(s.id == model_id for s in await MODEL_REGISTRY.list_all()):
+        raise HTTPException(status_code=409, detail=f"이미 목록에 있는 모델입니다: {name}")
+    if await installed_ollama_models() is None:
+        raise HTTPException(status_code=503, detail="로컬 모델 서버(Ollama)에 연결할 수 없습니다. `docker compose up -d ollama`를 확인하세요.")
+
+    PULL_MANAGER.start(model_id)
+    state = await PULL_MANAGER.wait_started(model_id)
+    if state is not None and state.status == "error":
+        PULL_MANAGER.forget(model_id)
+        raise HTTPException(status_code=400, detail=friendly_pull_error(state.message, name))
+
+    try:
+        async with get_pool().acquire() as conn:
+            await store.add_custom_model(conn, model_id, label, current_user["id"])
+    except Exception as e:
+        PULL_MANAGER.cancel(model_id)
+        raise HTTPException(status_code=500, detail=f"커스텀 모델을 등록하지 못했습니다: {type(e).__name__}: {e}")
+    await MODEL_REGISTRY.refresh(force=True)
+    print(f"[local_models] 커스텀 모델 추가: {name} (요청: {current_user.get('email')})")
+    return {"modelId": model_id, "name": name, "label": label,
+            "pull": PULL_MANAGER.get(model_id).to_dict() if PULL_MANAGER.get(model_id) else None}
+
+
+@router.patch("/custom", status_code=204)
+async def rename_custom(data: CustomRenameRequest, current_user: dict[str, Any] = Depends(get_current_user)):
+    """커스텀 모델의 표시 이름을 바꾼다 (채팅 화면 선택 목록에도 이 이름으로 보인다)."""
+    _require_db()
+    spec = await _custom_spec(data.modelId)
+    label = _clean_label(data.label, spec.label)
+    async with get_pool().acquire() as conn:
+        await store.rename_custom_model(conn, data.modelId, label)
+    await MODEL_REGISTRY.refresh(force=True)
+
+
+@router.post("/custom/delete")
+async def delete_custom(data: DeleteRequest, current_user: dict[str, Any] = Depends(get_current_user)):
+    """
+    커스텀 모델을 지운다: 받는 중이면 취소하고, 받아져 있으면 서버에서 파일을 지운 뒤 목록에서 뺀다.
+    파일 삭제는 로컬 모델 삭제(POST /chatbot/models/delete)와 같다 — 서버 전체에서 지워진다.
+    """
+    _require_db()
+    spec = await _custom_spec(data.modelId)
+    name = ollama_name(spec.id)
+    freed = 0
+    if PULL_MANAGER.cancel(spec.id):
+        await asyncio.sleep(0.2)   # 취소가 Ollama 연결을 닫을 틈을 준다
+    installed = await installed_ollama_models()
+    if installed is not None and name and is_installed(name, installed):
+        freed = installed_size(name, installed) or 0
+        try:
+            await delete_ollama_model(name)
+        except FileNotFoundError:
+            pass   # 그새 지워졌으면 등록만 해제한다
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"모델 파일 삭제에 실패했습니다: {type(e).__name__}: {e}")
+    async with get_pool().acquire() as conn:
+        await store.delete_custom_model(conn, spec.id)
+    PULL_MANAGER.forget(spec.id)
+    await MODEL_REGISTRY.refresh(force=True)
+    print(f"[local_models] 커스텀 모델 삭제: {name} ({freed / 1e9:.1f} GB, 요청: {current_user.get('email')})")
+    return {"modelId": spec.id, "deleted": True, "sizeBytes": freed}

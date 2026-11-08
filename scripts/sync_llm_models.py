@@ -54,16 +54,21 @@ async def main() -> None:
                                  user=DB_USER, password=DB_PASSWORD)
     try:
         await conn.execute(SCHEMA_SQL)   # 테이블이 없으면 생성
-        db_ids = {r["id"] for r in await conn.fetch("SELECT id FROM llm_models")}
+        rows = await conn.fetch("SELECT id, is_custom FROM llm_models")
+        db_ids = {r["id"] for r in rows}
+        # 커스텀 모델은 사용자가 마이 페이지에서 추가한 것이라 JSON에 없는 게 정상이다 → --prune에서도 지키지 않는다
+        custom_ids = {r["id"] for r in rows if r["is_custom"]}
         added = [i for i in json_ids if i not in db_ids]
         updated = [i for i in json_ids if i in db_ids]
-        missing = sorted(db_ids - set(json_ids))
+        missing = sorted(db_ids - set(json_ids) - custom_ids)
 
         print(f"대상 DB : {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
         print(f"JSON    : {args.file}")
         print(f"  추가 {len(added)}개: {added or '-'}")
         print(f"  갱신 {len(updated)}개")
         print(f"  JSON에 없는 모델 {len(missing)}개: {missing or '-'} → {'삭제' if args.prune else '유지'}")
+        if custom_ids:
+            print(f"  커스텀 모델 {len(custom_ids)}개: 마이 페이지에서 관리 (동기화 대상 아님)")
 
         if not args.yes and input("반영하려면 'yes' 입력: ").strip() != "yes":
             print("취소했습니다.")

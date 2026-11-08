@@ -17,7 +17,7 @@ SEED_PATH = Path(__file__).with_name("seed_models.json")
 async def load_models(conn) -> list[ModelSpec]:
     """DB의 모든 모델(비활성 포함)을 읽는다."""
     model_rows = await conn.fetch(
-        """SELECT id, label, group_name, sort_order, enabled, is_default, fixed_temperature, options
+        """SELECT id, label, group_name, sort_order, enabled, is_default, fixed_temperature, options, is_custom
              FROM llm_models ORDER BY sort_order, id"""
     )
     specs = []
@@ -28,7 +28,7 @@ async def load_models(conn) -> list[ModelSpec]:
         specs.append(ModelSpec(
             id=r["id"], label=r["label"], group=r["group_name"], sort_order=r["sort_order"],
             enabled=r["enabled"], is_default=r["is_default"], fixed_temperature=r["fixed_temperature"],
-            options=options or {},
+            options=options or {}, is_custom=r["is_custom"],
         ))
     return specs
 
@@ -67,6 +67,38 @@ async def upsert_models(conn, models: list[dict]) -> None:
             json.dumps(m.get("options") or {}, ensure_ascii=False),
         )
 
+
+# ────────────── 커스텀 모델 (마이 페이지에서 사용자가 추가한 Ollama 모델) ──────────────
+CUSTOM_GROUP = "커스텀"
+CUSTOM_SORT_BASE = 1000          # 등록 모델(seed) 뒤에 추가한 순서대로 보인다
+# 처음 보는 모델이라 크기를 모른다. 다른 로컬 모델과 같은 컨텍스트로 두되,
+# 큰 모델은 VRAM을 넘으면 Ollama가 일부를 CPU로 옮겨 느려진다 (실패하지는 않는다).
+CUSTOM_OPTIONS = {"num_ctx": 32768}
+
+
+async def add_custom_model(conn, model_id: str, label: str, created_by: str) -> None:
+    sort_order = await conn.fetchval(
+        "SELECT COALESCE(MAX(sort_order), $1) + 1 FROM llm_models WHERE is_custom", CUSTOM_SORT_BASE,
+    )
+    await conn.execute(
+        """INSERT INTO llm_models (id, label, group_name, sort_order, enabled, is_default,
+                                   fixed_temperature, options, is_custom, created_by)
+           VALUES ($1, $2, $3, $4, TRUE, FALSE, FALSE, $5::jsonb, TRUE, $6)""",
+        model_id, label, CUSTOM_GROUP, sort_order, json.dumps(CUSTOM_OPTIONS), created_by,
+    )
+
+
+async def rename_custom_model(conn, model_id: str, label: str) -> bool:
+    result = await conn.execute(
+        "UPDATE llm_models SET label = $2, updated_at = now() WHERE id = $1 AND is_custom", model_id, label,
+    )
+    return result.endswith(" 1")
+
+
+async def delete_custom_model(conn, model_id: str) -> bool:
+    """커스텀 모델 등록을 지운다 (사용자별 사용 설정은 FK CASCADE로 함께 삭제)."""
+    result = await conn.execute("DELETE FROM llm_models WHERE id = $1 AND is_custom", model_id)
+    return result.endswith(" 1")
 
 
 async def seed_if_empty(pool) -> int:

@@ -14,6 +14,8 @@ import {
   type PullState,
 } from '../services/models'
 import { formatWhen } from '../services/time'
+import CustomModelsCard from '../components/settings/CustomModelsCard'
+import { LocalBadge, ModelSwitch, PullProgress } from '../components/settings/ModelBits'
 
 /** 다운로드 진행률 조회 주기 (받는 중인 모델이 있을 때만 조회한다) */
 const PULL_POLL_MS = 1500
@@ -22,6 +24,7 @@ const PULL_POLL_MS = 1500
  * 마이 페이지.
  *  - 계정 정보
  *  - 모델 설정: 채팅 화면 선택 목록에 보일 모델을 켜고 끈다. 로컬 모델은 여기서 다운로드·삭제한다.
+ *  - 커스텀 모델: Ollama 모델명을 입력해 추가·이름 변경·삭제 (components/settings/CustomModelsCard)
  *  - 로컬 저장 공간: 서버에 받아진 모델 용량. 목록에서 빠지고 파일만 남은 모델도 여기서 지운다.
  *
  * 모델을 꺼도 백엔드 호출은 막히지 않는다 — 선택 목록을 정리하는 용도다.
@@ -142,6 +145,10 @@ export default function SettingsPage() {
     }
   }
 
+  // 관리자가 등록한 모델과 사용자가 추가한 커스텀 모델은 카드를 나눠 보여준다
+  const builtinModels = models.filter((m) => !m.custom)
+  const customModels = models.filter((m) => m.custom)
+
   // 목록에서 빠졌는데 서버에 파일만 남은 모델 (용량만 차지한다)
   const orphans = storage?.models.filter((m) => !m.registered) ?? []
   const hasLocal = models.some((m) => m.local) || (storage?.models.length ?? 0) > 0
@@ -179,9 +186,9 @@ export default function SettingsPage() {
 
         {error && <p className="settings__error" role="alert">{error}</p>}
         {loading && <p className="settings__empty">불러오는 중…</p>}
-        {!loading && models.length === 0 && !error && <p className="settings__empty">등록된 모델이 없습니다.</p>}
+        {!loading && builtinModels.length === 0 && !error && <p className="settings__empty">등록된 모델이 없습니다.</p>}
 
-        {groupModels(models).map((g) => (
+        {groupModels(builtinModels).map((g) => (
           <div key={g.group} className="model-group">
             <h3 className="model-group__title">{g.group}</h3>
             <ul className="model-list">
@@ -202,6 +209,18 @@ export default function SettingsPage() {
           </div>
         ))}
       </section>
+
+      {!loading && (
+        <CustomModelsCard
+          models={customModels}
+          pulls={pulls}
+          saving={saving}
+          enabledCount={enabledCount}
+          onToggle={toggle}
+          onRetry={download}
+          onChanged={reload}
+        />
+      )}
 
       {hasLocal && (
         <section className="settings__card">
@@ -282,18 +301,7 @@ function ModelRow({ model: m, pull, saving, isLastEnabled, onToggle, onDownload,
         </div>
         <code className="model-row__id">{m.id}</code>
 
-        {pulling && (
-          <div className="pull-progress" aria-live="polite">
-            <div className="pull-progress__bar">
-              <span style={{ width: `${pull?.percent ?? 0}%` }} />
-            </div>
-            <div className="pull-progress__meta">
-              {pull?.percent != null ? `${Math.floor(pull.percent)}%` : '준비 중'}
-              {pull && pull.total > 0 && ` · ${formatBytes(pull.completed)} / ${formatBytes(pull.total)}`}
-              {pull?.message && ` · ${pull.message}`}
-            </div>
-          </div>
-        )}
+        {pulling && <PullProgress pull={pull} />}
         {pullFailed && <p className="model-row__error">다운로드 실패: {pull?.message}</p>}
         {m.localStatus === 'unreachable' && (
           <p className="model-row__hint">로컬 모델 서버(Ollama)에 연결할 수 없어 설치 상태를 확인하지 못했습니다.</p>
@@ -312,31 +320,8 @@ function ModelRow({ model: m, pull, saving, isLastEnabled, onToggle, onDownload,
             {deleting ? '삭제 중…' : '삭제'}
           </button>
         )}
-        <label
-          className="switch"
-          title={isLastEnabled ? '모델을 하나 이상 켜 두어야 합니다.' : m.enabled ? '사용 안 함으로 바꾸기' : '사용으로 바꾸기'}
-        >
-          <input
-            type="checkbox"
-            checked={m.enabled}
-            disabled={saving || isLastEnabled}
-            onChange={onToggle}
-            aria-label={`${m.label} 사용`}
-          />
-          <span className="switch__track" aria-hidden><span className="switch__thumb" /></span>
-          <span className="switch__label">{m.enabled ? '사용' : '사용 안 함'}</span>
-        </label>
+        <ModelSwitch model={m} saving={saving} isLastEnabled={isLastEnabled} onToggle={onToggle} />
       </div>
     </li>
   )
-}
-
-function LocalBadge({ model: m, pulling }: { model: ModelOption; pulling: boolean }) {
-  if (pulling) return <span className="badge badge--info">다운로드 중</span>
-  switch (m.localStatus) {
-    case 'installed': return <span className="badge badge--ok">설치됨</span>
-    case 'missing': return <span className="badge badge--warn">미설치</span>
-    case 'unreachable': return <span className="badge badge--muted">상태 확인 불가</span>
-    default: return <span className="badge badge--muted">로컬</span>
-  }
 }
