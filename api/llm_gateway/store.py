@@ -101,6 +101,57 @@ async def delete_custom_model(conn, model_id: str) -> bool:
     return result.endswith(" 1")
 
 
+# ────────────── API 모델 (마이 페이지 Google·OpenAI·Anthropic 탭) ──────────────
+async def add_api_model(conn, model_id: str, label: str, group: str, created_by: str) -> None:
+    """
+    카탈로그(설치된 LiteLLM이 아는 모델)에서 고른 API 모델을 추가한다. 같은 그룹의 맨 뒤에 붙는다.
+    최신 모델 대부분이 temperature 지정을 거부하므로(Gemini 3+, GPT-5+, Claude 4.7+) 보내지 않는다.
+    """
+    sort_order = await conn.fetchval(
+        "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM llm_models WHERE group_name = $1 AND NOT (id LIKE 'ollama/%')",
+        group,
+    )
+    await conn.execute(
+        """INSERT INTO llm_models (id, label, group_name, sort_order, enabled, is_default,
+                                   fixed_temperature, options, is_custom, created_by)
+           VALUES ($1, $2, $3, $4, TRUE, FALSE, TRUE, '{}'::jsonb, TRUE, $5)""",
+        model_id, label, group, sort_order, created_by,
+    )
+    await conn.execute("DELETE FROM llm_models_removed WHERE id = $1", model_id)
+
+
+async def remove_model(conn, model_id: str) -> str:
+    """
+    모델을 목록에서 지운다. 사용자가 추가한 모델은 그냥 지우고, 기본(seed) 모델은 지운 것을 기억해
+    seed 동기화가 되살리지 않게 한다. 반환: 'custom' | 'default' | 'missing'
+    """
+    row = await conn.fetchrow("SELECT is_custom FROM llm_models WHERE id = $1", model_id)
+    if row is None:
+        return "missing"
+    async with conn.transaction():
+        await conn.execute("DELETE FROM llm_models WHERE id = $1", model_id)
+        if not row["is_custom"]:
+            await conn.execute("INSERT INTO llm_models_removed (id) VALUES ($1) ON CONFLICT DO NOTHING", model_id)
+    return "custom" if row["is_custom"] else "default"
+
+
+async def removed_model_ids(conn) -> set[str]:
+    return {r["id"] for r in await conn.fetch("SELECT id FROM llm_models_removed")}
+
+
+async def restore_defaults(conn, model_ids: list[str]) -> int:
+    """삭제했던 기본 모델을 seed JSON 값으로 되살린다. 되살린 개수를 반환한다."""
+    seed = {m["id"]: m for m in read_seed()}
+    targets = [seed[i] for i in model_ids if i in seed]
+    if not targets:
+        return 0
+    async with conn.transaction():
+        # is_default는 건드리지 않는다 (지금 기본 모델을 그대로 둔다)
+        await upsert_models(conn, [{**m, "is_default": False} for m in targets])
+        await conn.execute("DELETE FROM llm_models_removed WHERE id = ANY($1::text[])", [m["id"] for m in targets])
+    return len(targets)
+
+
 async def seed_if_empty(pool) -> int:
     """llm_models가 비어 있을 때만 seed JSON으로 채운다. 채운 모델 수를 반환한다."""
     async with pool.acquire() as conn:

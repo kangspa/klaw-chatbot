@@ -772,6 +772,40 @@ a:hover { text-decoration: underline; }
 .model-row__rename { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .model-row__rename-input { flex: 1; min-width: 160px; padding: 6px 10px; font-size: 14px; }
 
+/* 모델 설정 탭 (Google · OpenAI · Anthropic · 로컬) */
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 14px; overflow-x: auto; }
+.tabs__tab {
+  background: transparent; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  padding: 8px 14px; font: inherit; font-size: 14px; font-weight: 600; color: var(--muted); cursor: pointer; white-space: nowrap;
+}
+.tabs__tab:hover { color: var(--text); }
+.tabs__tab.is-active { color: var(--primary); border-bottom-color: var(--primary); }
+.tabs__tab:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; border-radius: 4px; }
+.tabs__count {
+  display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px;
+  font-size: 11px; line-height: 18px; background: var(--surface-2); color: var(--muted); text-align: center;
+}
+.tabs__tab.is-active .tabs__count { background: var(--primary-tint); color: var(--primary); }
+
+.api-tab__warn {
+  background: #fdf3e1; color: #8a5208; border-radius: var(--radius-sm); padding: 8px 12px; font-size: 13px; margin-bottom: 10px;
+}
+.api-tab__warn code, .model-row__hint code { font-size: 12px; }
+.api-tab__footer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.api-tab__source { margin-left: auto; font-size: 12px; color: var(--faint); }
+.model-row__meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+.catalog { margin-top: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; background: var(--surface-2); }
+.catalog__search { padding: 8px 12px; font-size: 14px; }
+.catalog__note { font-size: 12px; color: var(--muted); margin: 6px 0 8px; }
+.catalog__list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.catalog__item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; }
+.catalog__item + .catalog__item { border-top: 1px solid var(--border); }
+.catalog__body { flex: 1; min-width: 0; }
+.catalog__name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.catalog__meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
 /* 로컬 모델 서버(Ollama) 버전 */
 .ollama-info { display: grid; gap: 8px; margin: 0 0 14px; }
 .ollama-info > div { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
@@ -868,6 +902,7 @@ a:hover { text-decoration: underline; }
   .settings { padding: 20px 14px 32px; }
   .model-row { flex-wrap: wrap; }
   .model-row__actions { width: 100%; justify-content: flex-end; }
+  .api-tab__source { margin-left: 0; width: 100%; }
   .msg__body { max-width: 85%; }
   /* 터치 기기에는 hover가 없으므로 액션 버튼을 항상 노출 */
   .msg__actions { opacity: 1; }

@@ -184,3 +184,68 @@ export function formatBytes(n: number): string {
   const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1000)))
   return `${(n / 1000 ** i).toFixed(i >= 3 ? 1 : 0)} ${units[i]}`
 }
+
+// ────────────── API 모델 (Google·OpenAI·Anthropic 탭) ──────────────
+
+/** API 제공사 — 모델 ID 접두사와 같다 */
+export type ApiProvider = 'gemini' | 'openai' | 'anthropic'
+
+export const API_PROVIDERS: { id: ApiProvider; label: string }[] = [
+  { id: 'gemini', label: 'Google' },
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'anthropic', label: 'Anthropic' },
+]
+
+/** 모델 ID의 API 제공사 (API 모델이 아니면 null) */
+export function apiProviderOf(modelId: string): ApiProvider | null {
+  const prefix = modelId.split('/', 1)[0]
+  return API_PROVIDERS.some((p) => p.id === prefix) ? (prefix as ApiProvider) : null
+}
+
+/** 설치된 LiteLLM이 아는, 추가할 수 있는 모델 하나 */
+export interface CatalogModel {
+  id: string
+  name: string
+  /** 100만 토큰당 USD */
+  inputPer1M: number | null
+  outputPer1M: number | null
+  contextTokens: number | null
+  /** 서비스 종료 예정일 (YYYY-MM-DD) */
+  deprecationDate: string | null
+  supportsVision: boolean
+  supportsReasoning: boolean
+  /** 이미 목록에 있는지 */
+  added: boolean
+}
+
+export interface ProviderCatalog {
+  provider: ApiProvider
+  group: string
+  litellmVersion: string
+  apiKeyConfigured: boolean
+  /** 키를 넣을 .env 변수 이름 */
+  apiKeyEnv: string
+  models: CatalogModel[]
+  /** 삭제했던 기본 제공 모델 (복원 가능) */
+  removedDefaults: { id: string; label: string }[]
+}
+
+/** GET /chatbot/models/catalog?provider= */
+export async function getCatalog(provider: ApiProvider): Promise<ProviderCatalog> {
+  return apiFetch<ProviderCatalog>(`/chatbot/models/catalog?provider=${provider}`)
+}
+
+/** POST /chatbot/models/api — 카탈로그 모델 추가 */
+export async function addApiModel(modelId: string): Promise<{ modelId: string; label: string }> {
+  return apiFetch('/chatbot/models/api', { method: 'POST', body: JSON.stringify({ modelId }) })
+}
+
+/** POST /chatbot/models/api/delete — API 모델 삭제 (기본 제공 모델도 가능, 기본 모델은 불가) */
+export async function deleteApiModel(modelId: string): Promise<{ deleted: boolean; wasDefault: boolean }> {
+  return apiFetch('/chatbot/models/api/delete', { method: 'POST', body: JSON.stringify({ modelId }) })
+}
+
+/** POST /chatbot/models/api/restore — 삭제했던 기본 제공 모델 되살리기 */
+export async function restoreApiDefaults(provider: ApiProvider): Promise<{ restored: number }> {
+  return apiFetch('/chatbot/models/api/restore', { method: 'POST', body: JSON.stringify({ provider }) })
+}

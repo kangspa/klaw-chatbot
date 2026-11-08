@@ -142,6 +142,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_models_default
 ALTER TABLE llm_models ADD COLUMN IF NOT EXISTS is_custom BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE llm_models ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES users(id) ON DELETE SET NULL;
 
+-- 마이 페이지에서 삭제한 기본(seed) 모델. sync_llm_models.py가 seed JSON으로 되살리지 않도록 기억해 둔다.
+-- 마이 페이지의 '기본 모델 복원'이 여기서 지우고 seed JSON 값으로 다시 넣는다.
+CREATE TABLE IF NOT EXISTS llm_models_removed (
+    id         TEXT PRIMARY KEY,
+    removed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- 사용자가 마이 페이지에서 '사용 안 함'으로 둔 모델. 행이 있으면 꺼진 것이고, 없으면 켜진 것이다.
 -- (새 모델이 추가되면 별도 작업 없이 모두에게 켜진 상태로 보이게 하려고 '끈 것'만 저장한다)
 -- 프론트의 모델 선택 목록에만 반영한다 — 백엔드는 이 설정으로 호출을 막지 않는다.

@@ -2,21 +2,26 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import {
   deleteLocalModel,
+  API_PROVIDERS,
+  apiProviderOf,
   formatBytes,
   getLocalStorage,
-  groupModels,
   listModels,
   listPulls,
   setModelEnabled,
   startPull,
+  type ApiProvider,
   type LocalStorage,
   type ModelOption,
   type PullState,
 } from '../services/models'
 import { formatWhen } from '../services/time'
+import ApiModelsTab from '../components/settings/ApiModelsTab'
 import CustomModelsCard from '../components/settings/CustomModelsCard'
 import OllamaServerCard from '../components/settings/OllamaServerCard'
 import { LocalBadge, ModelSwitch, PullProgress } from '../components/settings/ModelBits'
+
+type ModelTab = ApiProvider | 'local'
 
 /** 다운로드 진행률 조회 주기 (받는 중인 모델이 있을 때만 조회한다) */
 const PULL_POLL_MS = 1500
@@ -24,7 +29,8 @@ const PULL_POLL_MS = 1500
 /**
  * 마이 페이지.
  *  - 계정 정보
- *  - 모델 설정: 채팅 화면 선택 목록에 보일 모델을 켜고 끈다. 로컬 모델은 여기서 다운로드·삭제한다.
+ *  - 모델 설정: 회사별 탭(Google·OpenAI·Anthropic)에서 API 모델을 추가·삭제하고 켜고 끈다
+ *    (components/settings/ApiModelsTab). '로컬' 탭은 등록된 로컬 모델의 다운로드·삭제.
  *  - 커스텀 모델: Ollama 모델명을 입력해 추가·이름 변경·삭제 (components/settings/CustomModelsCard)
  *  - 로컬 저장 공간: 서버에 받아진 모델 용량. 목록에서 빠지고 파일만 남은 모델도 여기서 지운다.
  *  - 로컬 모델 서버: Ollama 버전 변경 (components/settings/OllamaServerCard)
@@ -35,6 +41,7 @@ const PULL_POLL_MS = 1500
 export default function SettingsPage() {
   const { user } = useAuth()
   const [models, setModels] = useState<ModelOption[]>([])
+  const [tab, setTab] = useState<ModelTab>('gemini')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   // 저장 요청이 진행 중인 모델 (토글 중복 클릭 방지)
@@ -147,9 +154,14 @@ export default function SettingsPage() {
     }
   }
 
-  // 관리자가 등록한 모델과 사용자가 추가한 커스텀 모델은 카드를 나눠 보여준다
-  const builtinModels = models.filter((m) => !m.custom)
-  const customModels = models.filter((m) => m.custom)
+  // API 모델은 회사별 탭, 등록된 로컬 모델은 '로컬' 탭, 사용자가 추가한 Ollama 모델은 커스텀 모델 카드
+  const apiModelsOf = (p: ApiProvider) => models.filter((m) => apiProviderOf(m.id) === p)
+  const localModels = models.filter((m) => m.local && !m.custom)
+  const customModels = models.filter((m) => m.local && m.custom)
+  const tabs: { id: ModelTab; label: string; count: number }[] = [
+    ...API_PROVIDERS.map((p) => ({ id: p.id as ModelTab, label: p.label, count: apiModelsOf(p.id).length })),
+    { id: 'local', label: '로컬', count: localModels.length },
+  ]
 
   // 목록에서 빠졌는데 서버에 파일만 남은 모델 (용량만 차지한다)
   const orphans = storage?.models.filter((m) => !m.registered) ?? []
@@ -182,34 +194,65 @@ export default function SettingsPage() {
         <div className="settings__card-head">
           <h2 className="settings__card-title">모델 설정</h2>
           <p className="settings__card-desc">
-            켜 둔 모델만 채팅 화면의 모델 선택 목록에 보입니다. 로컬 모델은 처음 한 번 서버에 다운로드해야 쓸 수 있습니다.
+            켜 둔 모델만 채팅 화면의 모델 선택 목록에 보입니다. 회사별 탭에서 모델을 추가·삭제할 수 있고,
+            로컬 모델은 처음 한 번 서버에 다운로드해야 쓸 수 있습니다.
           </p>
         </div>
 
         {error && <p className="settings__error" role="alert">{error}</p>}
         {loading && <p className="settings__empty">불러오는 중…</p>}
-        {!loading && builtinModels.length === 0 && !error && <p className="settings__empty">등록된 모델이 없습니다.</p>}
 
-        {groupModels(builtinModels).map((g) => (
-          <div key={g.group} className="model-group">
-            <h3 className="model-group__title">{g.group}</h3>
-            <ul className="model-list">
-              {g.models.map((m) => (
-                <ModelRow
-                  key={m.id}
-                  model={m}
-                  pull={pulls[m.id] ?? null}
-                  saving={saving.has(m.id)}
-                  isLastEnabled={m.enabled && enabledCount === 1}
-                  onToggle={() => toggle(m)}
-                  onDownload={() => download(m)}
-                  deleting={deleting.has(m.id)}
-                  onDelete={() => remove(m.id, m.label, m.sizeBytes)}
-                />
+        {!loading && (
+          <>
+            <div className="tabs" role="tablist" aria-label="모델 제공사">
+              {tabs.map((t) => (
+                <button
+                  key={t.id}
+                  role="tab"
+                  aria-selected={tab === t.id}
+                  className={`tabs__tab${tab === t.id ? ' is-active' : ''}`}
+                  onClick={() => setTab(t.id)}
+                >
+                  {t.label} <span className="tabs__count">{t.count}</span>
+                </button>
               ))}
-            </ul>
-          </div>
-        ))}
+            </div>
+
+            <div className="tabs__panel" role="tabpanel">
+              {tab === 'local' ? (
+                localModels.length === 0 ? (
+                  <p className="settings__empty">등록된 로컬 모델이 없습니다. 아래 ‘커스텀 모델’에서 추가하세요.</p>
+                ) : (
+                  <ul className="model-list">
+                    {localModels.map((m) => (
+                      <ModelRow
+                        key={m.id}
+                        model={m}
+                        pull={pulls[m.id] ?? null}
+                        saving={saving.has(m.id)}
+                        isLastEnabled={m.enabled && enabledCount === 1}
+                        onToggle={() => toggle(m)}
+                        onDownload={() => download(m)}
+                        deleting={deleting.has(m.id)}
+                        onDelete={() => remove(m.id, m.label, m.sizeBytes)}
+                      />
+                    ))}
+                  </ul>
+                )
+              ) : (
+                <ApiModelsTab
+                  key={tab}
+                  provider={tab}
+                  models={apiModelsOf(tab)}
+                  saving={saving}
+                  enabledCount={enabledCount}
+                  onToggle={toggle}
+                  onChanged={reload}
+                />
+              )}
+            </div>
+          </>
+        )}
       </section>
 
       {!loading && (

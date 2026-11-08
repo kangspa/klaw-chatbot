@@ -56,6 +56,12 @@ async def main() -> None:
         await conn.execute(SCHEMA_SQL)   # 테이블이 없으면 생성
         rows = await conn.fetch("SELECT id, is_custom FROM llm_models")
         db_ids = {r["id"] for r in rows}
+        # 마이 페이지에서 삭제한 기본 모델은 되살리지 않는다 (복원은 마이 페이지 '기본 모델 복원')
+        removed = {r["id"] for r in await conn.fetch("SELECT id FROM llm_models_removed")}
+        if removed & set(json_ids):
+            print(f"  마이 페이지에서 삭제한 기본 모델 {len(removed & set(json_ids))}개: 다시 넣지 않음 {sorted(removed & set(json_ids))}")
+        models = [m for m in models if m["id"] not in removed]
+        json_ids = [m["id"] for m in models]
         # 커스텀 모델은 사용자가 마이 페이지에서 추가한 것이라 JSON에 없는 게 정상이다 → --prune에서도 지키지 않는다
         custom_ids = {r["id"] for r in rows if r["is_custom"]}
         added = [i for i in json_ids if i not in db_ids]

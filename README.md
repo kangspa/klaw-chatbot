@@ -182,6 +182,13 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
 새로 추가된 모델은 모두에게 켜진 상태로 보인다.
 
 - 이 설정은 **화면 정리용**이다. 백엔드는 꺼진 모델의 호출을 막지 않는다.
+- **API 모델 (회사별 탭: Google · OpenAI · Anthropic)**: 기본 제공 모델(seed)에 더해 **지금 설치된 LiteLLM이 아는 모델**
+  중에서 골라 추가·삭제한다. 목록은 LiteLLM에 내장된 가격표에서 채팅 모델 · 도구 호출 지원 · 종료일이 지나지 않은 것만 추린다
+  (`api/llm_gateway/catalog.py`). LiteLLM을 올리면 고를 수 있는 모델도 늘어난다.
+  - 추가한 모델은 `is_custom`으로 등록되고 temperature를 보내지 않는다 (최신 모델 대부분이 기본값 외 temperature를 거부).
+  - 기본 제공 모델도 지울 수 있다. 지운 기본 모델은 `llm_models_removed`에 기억해 `sync_llm_models.py`가 되살리지 않으며,
+    탭의 **기본 모델 복원**으로 되살린다. 기본 모델(`is_default`)은 지울 수 없다.
+  - 회사 API 키(`GEMINI_API_KEY` 등)가 `.env`에 없으면 탭에 경고를 띄운다.
 - 아직 받지 않은 로컬 모델로 채팅하면 `400 "… 마이 페이지 > 모델 설정에서 다운로드하세요."`를 돌려준다.
 - 로컬(Ollama) 모델은 마이 페이지의 **다운로드** 버튼으로 받고, **삭제** 버튼으로 지운다. 서버가 백그라운드로 받고, 화면은 진행률을 보여준다
   (페이지를 떠나도 계속 받는다). Ollama는 서버 전체가 공유하므로 한 번 받으면 모든 사용자에게 설치된 것으로 보인다.
@@ -207,6 +214,10 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
 | `POST /chatbot/models/custom/delete` | `{modelId}` 다운로드 취소·파일 삭제 후 커스텀 목록에서 제거 |
 | `GET /chatbot/models/storage` | Ollama에 받아진 모델 전체와 용량 (`registered: false` = 파일만 남은 모델) |
 | `POST /chatbot/models/delete` | `{modelId}` 로컬 모델 파일 삭제 (받는 중이면 409) |
+| `GET /chatbot/models/catalog?provider=` | 회사별로 추가할 수 있는 모델 (설치된 LiteLLM 기준) · API 키 설정 여부 · 복원 가능한 기본 모델 |
+| `POST /chatbot/models/api` | `{modelId}` API 모델 추가 |
+| `POST /chatbot/models/api/delete` | `{modelId}` API 모델 삭제 (기본 제공 모델은 복원 가능, 기본 모델은 불가) |
+| `POST /chatbot/models/api/restore` | `{provider}` 삭제한 기본 제공 모델 되살리기 |
 | `GET /chatbot/ollama` | 실행·설정 Ollama 버전, 가속 장치, 선택 가능한 릴리스, 진행 중인 버전 변경 |
 | `POST /chatbot/ollama/upgrade` | `{version}` Ollama 버전 변경 시작 (다운로드 중이면 409) |
 | `GET /chatbot/ollama/upgrade` | 버전 변경 진행 단계·로그 |

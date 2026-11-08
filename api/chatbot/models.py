@@ -17,6 +17,7 @@
 로컬 모델이 아직 없으면 채팅 호출 시 안내 오류(400)만 돌려준다 (chat_runner.resolve_model).
 """
 import asyncio
+from importlib import metadata as importlib_metadata
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,7 +26,7 @@ from pydantic import BaseModel, Field
 from api.auth.deps import get_current_user
 from api.chatbot.functions import model_prefs
 from api.db import get_pool, is_ready as db_is_ready
-from api.llm_gateway import store
+from api.llm_gateway import catalog, store
 from api.llm_gateway.local_models import (
     PULL_MANAGER,
     delete_ollama_model,
@@ -352,3 +353,103 @@ async def delete_custom(data: DeleteRequest, current_user: dict[str, Any] = Depe
     await MODEL_REGISTRY.refresh(force=True)
     print(f"[local_models] 커스텀 모델 삭제: {name} ({freed / 1e9:.1f} GB, 요청: {current_user.get('email')})")
     return {"modelId": spec.id, "deleted": True, "sizeBytes": freed}
+
+
+# ────────────────────────── API 모델 (Google·OpenAI·Anthropic 탭) ──────────────────────────
+class ApiModelRequest(BaseModel):
+    modelId: str = Field(..., description="'gemini/…', 'openai/…', 'anthropic/…'")
+
+
+class RestoreRequest(BaseModel):
+    provider: str = Field(..., description="gemini | openai | anthropic")
+
+
+def _api_prefix(model_id: str) -> str:
+    prefix = model_id.split("/", 1)[0]
+    if prefix not in catalog.API_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"API 모델이 아닙니다 (gemini/·openai/·anthropic/만): {model_id}")
+    return prefix
+
+
+@router.get("/catalog")
+async def get_catalog(provider: str):
+    """
+    제공사별로 추가할 수 있는 모델 목록 — 지금 설치된 LiteLLM이 아는 모델 기준 (api/llm_gateway/catalog.py).
+    이미 목록에 있는 모델은 added로 표시하고, 삭제한 기본 모델은 removedDefaults로 알려 복원할 수 있게 한다.
+    """
+    if provider not in catalog.API_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"지원하지 않는 제공사입니다: {provider}")
+    registered = {s.id for s in await MODEL_REGISTRY.list_all()}
+    models = [{**m, "added": m["id"] in registered} for m in catalog.catalog(provider)]
+    removed: list[dict] = []
+    if db_is_ready():
+        async with get_pool().acquire() as conn:
+            removed_ids = await store.removed_model_ids(conn)
+        seed = {m["id"]: m for m in store.read_seed()}
+        removed = [{"id": i, "label": seed[i]["label"]} for i in sorted(removed_ids)
+                   if i in seed and i.startswith(f"{provider}/") and i not in registered]
+    return {
+        "provider": provider,
+        "group": catalog.API_PROVIDERS[provider][1],
+        "litellmVersion": importlib_metadata.version("litellm"),
+        "apiKeyConfigured": catalog.api_key_configured(provider),
+        "apiKeyEnv": catalog.API_PROVIDERS[provider][2][0],
+        "models": models,
+        "removedDefaults": removed,
+    }
+
+
+@router.post("/api", status_code=201)
+async def add_api_model(data: ApiModelRequest, current_user: dict[str, Any] = Depends(get_current_user)):
+    """카탈로그에서 고른 API 모델을 추가한다. 채팅 선택 목록의 해당 제공사 그룹에 바로 보인다."""
+    _require_db()
+    prefix = _api_prefix(data.modelId)
+    item = catalog.find(data.modelId)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"설치된 LiteLLM이 지원하지 않는 모델입니다: {data.modelId}")
+    if any(s.id == data.modelId for s in await MODEL_REGISTRY.list_all()):
+        raise HTTPException(status_code=409, detail=f"이미 목록에 있는 모델입니다: {data.modelId}")
+    seed = {m["id"]: m for m in store.read_seed()}
+    async with get_pool().acquire() as conn:
+        if data.modelId in seed:
+            # 삭제했던 기본 모델을 카탈로그에서 다시 고르면 기본 모델 설정 그대로 되살린다
+            await store.restore_defaults(conn, [data.modelId])
+            label = seed[data.modelId]["label"]
+        else:
+            label = catalog.pretty_label(item["name"])
+            await store.add_api_model(conn, data.modelId, label, catalog.API_PROVIDERS[prefix][1], current_user["id"])
+    await MODEL_REGISTRY.refresh(force=True)
+    print(f"[models] API 모델 추가: {data.modelId} (요청: {current_user.get('email')})")
+    return {"modelId": data.modelId, "label": label}
+
+
+@router.post("/api/delete")
+async def delete_api_model(data: ApiModelRequest, current_user: dict[str, Any] = Depends(get_current_user)):
+    """
+    API 모델을 목록에서 지운다. 기본 제공 모델도 지울 수 있으며(복원 가능), 기본 모델(is_default)만은 지울 수 없다.
+    """
+    _require_db()
+    _api_prefix(data.modelId)
+    spec = next((s for s in await MODEL_REGISTRY.list_all() if s.id == data.modelId), None)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"목록에 없는 모델입니다: {data.modelId}")
+    if spec.is_default:
+        raise HTTPException(status_code=400, detail="기본 모델은 삭제할 수 없습니다. 요청에 모델이 없을 때 쓰이는 모델입니다.")
+    async with get_pool().acquire() as conn:
+        kind = await store.remove_model(conn, data.modelId)
+    await MODEL_REGISTRY.refresh(force=True)
+    print(f"[models] API 모델 삭제({kind}): {data.modelId} (요청: {current_user.get('email')})")
+    return {"modelId": data.modelId, "deleted": True, "wasDefault": kind == "default"}
+
+
+@router.post("/api/restore")
+async def restore_api_defaults(data: RestoreRequest, current_user: dict[str, Any] = Depends(get_current_user)):
+    """해당 제공사에서 삭제했던 기본 모델을 모두 되살린다."""
+    _require_db()
+    if data.provider not in catalog.API_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"지원하지 않는 제공사입니다: {data.provider}")
+    async with get_pool().acquire() as conn:
+        ids = [i for i in await store.removed_model_ids(conn) if i.startswith(f"{data.provider}/")]
+        restored = await store.restore_defaults(conn, ids)
+    await MODEL_REGISTRY.refresh(force=True)
+    return {"provider": data.provider, "restored": restored}
