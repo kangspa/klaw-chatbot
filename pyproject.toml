@@ -44,6 +44,7 @@ dependencies = [
     # langchain-mcp-adapters가 mcp<2를 요구해서 현재는 1.105 라인까지만 호환된다.
     "litellm==1.105.7",
     "langchain-litellm>=0.11.0",
+    "pystray>=0.19.5",
 ]
 
 [tool.uv]
@@ -57,4 +58,9 @@ dependencies = [
 override-dependencies = [
     "unclecode-litellm; sys_platform == 'never'",
     "pyyaml>=6.0.3,<7",
+]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.11",
 ]

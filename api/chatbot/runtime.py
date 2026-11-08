@@ -21,7 +21,8 @@ from api.llm_gateway import local_runtime as lr
 from api.llm_gateway import ollama_upgrade as ou
 from api.llm_gateway.local_models import PULL_MANAGER
 from api.llm_gateway.providers import LOCAL_PROVIDERS, split_model_id
-from api.llm_gateway.runtime_update import RUNTIME_UPDATER, RuntimeUpdateError
+from api.llm_gateway.runtime_update import LITELLM_LOCKED_REASON, RUNTIME_UPDATER, RuntimeUpdateError
+from api.stack import FROZEN
 from api.load_variable import MODEL_REGISTRY
 
 router = APIRouter(prefix="/runtime", dependencies=[Depends(get_current_user)])
@@ -64,6 +65,12 @@ async def _ollama_status() -> dict:
 
 async def _litellm_status() -> dict:
     current = lu.installed_version()
+    if FROZEN:
+        # exe에 묶인 LiteLLM은 화면에서 바꿀 수 없다 — 버전만 보여준다
+        return {"current": current, "latest": None, "latestCompatible": None, "scanning": False,
+                "updateAvailable": False, "canRestart": False, "lockedReason": LITELLM_LOCKED_REASON,
+                "releases": [{"version": current, "publishedAt": "", "compatible": True, "compatReason": "현재 버전"}],
+                "releasesError": None}
     releases, error = [], None
     try:
         releases = await asyncio.to_thread(lu.list_releases, 200)
@@ -87,6 +94,8 @@ async def _litellm_status() -> dict:
         "scanning": lu.SCANNER.scanning,
         "updateAvailable": bool(compatible and lu.version_key(compatible) > lu.version_key(current)),
         "canRestart": runtime_control.can_restart(),
+        "lockedReason": None if runtime_control.can_restart() else
+            "서버를 `uv run python main.py`로 실행해야 LiteLLM을 바꿀 수 있습니다 (자동 재시작 필요).",
         "releases": shown,
         "releasesError": error,
     }

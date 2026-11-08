@@ -12,7 +12,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import SystemMessage, ToolMessage
 from langchain_community.tools.searx_search.tool import SearxSearchResults
 from langgraph.types import Command
-from crawl4ai import AsyncWebCrawler
+from crawl4ai import AsyncWebCrawler, BrowserConfig
 from qdrant_client.http import models as rest
 
 search_tool = SearxSearchResults(
@@ -28,7 +28,10 @@ async def web_search(query: str):
     return await search_tool.arun(query)
 
 async def _crawl(url: str) -> str:
-    async with AsyncWebCrawler(verbose=False) as crawler:
+    # 패키징된 exe는 playwright 전용 브라우저를 따로 받지 않으므로 Windows에 기본으로 있는 Edge를 쓴다
+    from api.stack import FROZEN
+    config = BrowserConfig(browser_type="chromium", channel="msedge", headless=True, verbose=False) if FROZEN else None
+    async with AsyncWebCrawler(config=config, verbose=False) as crawler:
         result = await crawler.arun(url=url, bypass_cache=True)
         text = result.markdown.raw_markdown
     # 페이지 전체(메뉴·푸터 포함 수만 자)를 그대로 넘기면 크롤링이 반복될 때마다 대화 컨텍스트가 불어나

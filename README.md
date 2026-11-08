@@ -365,3 +365,34 @@ uv run python scripts/reset_db.py --yes   # 확인 없이 실행
 - Postgres: `users` / `chat_sessions` / `chat_messages` DROP 후 재생성
 - Qdrant: `conversation_history` 컬렉션 삭제 (서버 startup에서 자동 재생성)
 - LangGraph 상태(MemorySaver)는 서버를 재시작하면 함께 비워진다
+# 데스크톱 exe (시스템 트레이 앱)
+
+개인 PC에서 더블클릭으로 쓰는 배포 형태. 콘솔 창 없이 트레이 아이콘으로 돌고, 실행하면 브라우저가 열린다.
+
+```bash
+uv run python scripts/build_exe.py             # dist/KLaw.exe (exe 하나, 콘솔 창 없음)
+uv run python scripts/build_exe.py --onedir    # dist/KLaw/ (폴더 — 시작이 빠르다)
+uv run python scripts/build_exe.py --console   # 로그를 콘솔로 보는 확인용 빌드
+```
+
+- **필요한 것**: 실행 PC에 Docker Desktop (Postgres·Qdrant·SearXNG·korean-law-mcp·Ollama는 컨테이너로 돈다).
+  꺼져 있으면 exe가 켜고 기다린다. 없으면 트레이 메뉴에 설치 페이지 링크가 뜬다.
+- **트레이 메뉴**: 열기(아이콘 클릭 기본 동작) / 로그 폴더 열기 / 종료(웹 서버와 컨테이너를 모두 멈춘다).
+  exe를 다시 실행하면 새로 뜨지 않고 이미 떠 있는 화면을 연다 (중복 실행 방지).
+- **데이터·설정 위치**: `%LOCALAPPDATA%\KLaw` (`.env`, DB·벡터 데이터, 로그 `logs\klaw.log`).
+  첫 실행 때 DB 비밀번호·MCP 토큰을 무작위로 만든다. API 키와 `LAW_OC`는 화면의 API 키 페이지에서 넣는다.
+- **포트 충돌 방지**: 모든 포트는 `127.0.0.1`에만 열린다. 기본 포트(웹 8008, Postgres 5432, Qdrant 6333/6334,
+  SearXNG 8888, MCP 3000, Ollama 11434)가 다른 프로그램에 쓰이고 있으면 빈 포트를 골라 `.env`의 `KLAW_PORT_*`에 기억하고,
+  다음 실행부터 같은 포트를 쓴다. 컨테이너 이름도 compose 프로젝트(`klaw`)로 구분돼 다른 컨테이너와 겹치지 않는다.
+- **exe에서 안 되는 것**: LiteLLM 버전 변경 (파이썬 패키지가 exe 안에 묶여 있다 — 새 exe로 바꿔야 한다). Ollama 버전 변경은 된다.
+- **웹 크롤링**: exe에는 Playwright 브라우저를 넣지 않고, Windows 기본 Edge를 쓴다.
+- **Google 계정 연결**: Google Cloud Console의 승인된 JavaScript 원본에 `http://127.0.0.1:8008`을 추가해야 한다
+  (웹 포트가 바뀌었다면 그 포트로).
+
+| 환경 변수 | 기본값 | 용도 |
+| --- | --- | --- |
+| `KLAW_HOME` | exe: `%LOCALAPPDATA%\KLaw`, 개발: 저장소 | 데이터·설정 폴더 |
+| `KLAW_PROJECT` | exe: `klaw`, 개발: `klaw-chatbot` | compose 프로젝트 이름 (컨테이너 이름 앞부분) |
+| `KLAW_PORT_*` | 위 기본 포트 | 포트 고정 (자동으로 기록되기도 한다) |
+| `KLAW_NO_BROWSER` | — | `1`이면 실행할 때 브라우저를 열지 않는다 |
+| `KLAW_STOP_ON_EXIT` | `1` | `0`이면 종료해도 컨테이너를 켜둔다 |

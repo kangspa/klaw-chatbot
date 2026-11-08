@@ -25,9 +25,12 @@ from api import runtime_control
 from api.llm_gateway import litellm_upgrade as lu
 from api.llm_gateway.ollama_upgrade import UPGRADER as OLLAMA_UPGRADER, UpgradeJob
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-JOB_FILE = PROJECT_ROOT / ".runtime" / "runtime_job.json"
+from api.stack import FROZEN, REPO_ROOT as PROJECT_ROOT, RUNTIME_DIR
+
+JOB_FILE = RUNTIME_DIR / "runtime_job.json"
 HELPER = PROJECT_ROOT / "scripts" / "apply_litellm_update.py"
+# 패키징된 exe는 LiteLLM이 실행 파일 안에 묶여 있어 화면에서 바꿀 수 없다 (새 버전 exe로 바꾼다)
+LITELLM_LOCKED_REASON = "패키징된 앱(exe)에서는 LiteLLM이 실행 파일에 포함되어 있어 바꿀 수 없습니다. 새 버전의 exe로 업데이트하세요."
 
 
 class RuntimeUpdateError(RuntimeError):
@@ -73,6 +76,8 @@ class RuntimeUpdater:
     def start(self, ollama: Optional[str], litellm: Optional[str], model_ids: list[str]) -> RuntimeJob:
         if self.running or OLLAMA_UPGRADER.running:
             raise RuntimeUpdateError("이미 런타임 버전을 변경하는 중입니다.")
+        if litellm and FROZEN:
+            raise RuntimeUpdateError(LITELLM_LOCKED_REASON)
         if litellm and not runtime_control.can_restart():
             raise RuntimeUpdateError(
                 "LiteLLM을 바꾸려면 서버를 다시 띄워야 하는데, 이 서버는 `uv run python main.py`로 실행되지 않아 "
@@ -138,7 +143,7 @@ class RuntimeUpdater:
             # 새 콘솔 창: 도우미의 설치 로그와 다시 뜬 서버 로그가 이 창에 보인다
             subprocess.Popen(cmd, cwd=PROJECT_ROOT, creationflags=subprocess.CREATE_NEW_CONSOLE)
         else:
-            log = open(PROJECT_ROOT / ".runtime" / "server.log", "ab")
+            log = open(RUNTIME_DIR / "server.log", "ab")
             subprocess.Popen(cmd, cwd=PROJECT_ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
 
     def _save(self, job: RuntimeJob) -> None:
