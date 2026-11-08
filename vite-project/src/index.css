@@ -690,6 +690,95 @@ a:hover { text-decoration: underline; }
 .summary-card__foot { display: flex; justify-content: space-between; font-size: 11px; color: var(--faint); border-top: 1px solid var(--border); padding-top: 10px; margin-top: auto; }
 
 /* ============================================================
+   마이 페이지 (계정 · 모델 설정)
+   ============================================================ */
+.settings { flex: 1; overflow-y: auto; padding: 28px 24px 40px; }
+.settings > * { max-width: 860px; margin-left: auto; margin-right: auto; }
+.settings__header { margin-bottom: 20px; }
+.settings__title { font-size: 24px; }
+.settings__desc { color: var(--muted); margin-top: 6px; }
+.settings__card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 18px 20px; margin-bottom: 16px;
+}
+.settings__card-head { margin-bottom: 14px; }
+.settings__card-title { font-size: 16px; }
+.settings__card-head .settings__card-title { margin-bottom: 3px; }
+.settings__card > .settings__card-title { margin-bottom: 14px; }
+.settings__card-desc { font-size: 13px; color: var(--muted); }
+.settings__error {
+  background: var(--danger-tint); color: var(--danger); border-radius: var(--radius-sm);
+  padding: 10px 12px; font-size: 13px; margin-bottom: 12px;
+}
+.settings__empty { color: var(--muted); font-size: 14px; padding: 20px 0; text-align: center; }
+
+.account { display: flex; align-items: center; gap: 14px; }
+.account__avatar { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; }
+.account__avatar--initial {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--primary-tint); color: var(--primary); font-weight: 700; font-size: 20px;
+}
+.account__body { min-width: 0; }
+.account__name { font-weight: 700; font-size: 16px; }
+.account__email { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+.account__meta { color: var(--faint); font-size: 12px; margin-top: 2px; }
+
+.model-group + .model-group { margin-top: 18px; }
+.model-group__title { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: 0.3px; margin-bottom: 6px; }
+.model-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.model-row { display: flex; align-items: center; gap: 14px; padding: 12px 14px; }
+.model-row + .model-row { border-top: 1px solid var(--border); }
+.model-row.is-off .model-row__name, .model-row.is-off .model-row__id { color: var(--faint); }
+.model-row__main { flex: 1; min-width: 0; }
+.model-row__name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-weight: 600; }
+.model-row__id { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+.model-row__error { color: var(--danger); font-size: 12px; margin-top: 6px; overflow-wrap: anywhere; }
+.model-row__hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.model-row__actions { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+
+.badge {
+  display: inline-block; font-size: 11px; font-weight: 700; line-height: 1;
+  padding: 4px 7px; border-radius: 999px; background: var(--surface-2); color: var(--muted);
+}
+.badge--primary { background: var(--primary-tint); color: var(--primary); }
+.badge--ok { background: #e7f6ec; color: #1e7a3d; }
+.badge--warn { background: #fdf3e1; color: #a1600a; }
+.badge--info { background: #e6f1fd; color: #1d5fb0; }
+.badge--muted { background: var(--surface-2); color: var(--muted); }
+
+.btn--outline { background: var(--surface); color: var(--primary); border-color: var(--primary); }
+.btn--outline:hover:not(:disabled) { background: var(--primary-tint); }
+.btn--sm { padding: 6px 12px; font-size: 13px; }
+.btn--danger-outline { background: var(--surface); color: var(--danger); border-color: var(--danger); }
+.btn--danger-outline:hover:not(:disabled) { background: var(--danger-tint); }
+
+.storage-total { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; color: var(--muted); font-size: 14px; }
+.storage-total strong { color: var(--text); font-size: 22px; letter-spacing: -0.3px; }
+.storage-total__count { font-size: 13px; }
+
+.pull-progress { margin-top: 8px; }
+.pull-progress__bar { height: 6px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+.pull-progress__bar span { display: block; height: 100%; background: var(--primary); transition: width 0.4s ease; }
+.pull-progress__meta { font-size: 12px; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; }
+
+/* 토글 스위치 (체크박스를 시각적으로 감추고 트랙을 그린다 — 키보드 포커스는 유지) */
+.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch__track {
+  position: relative; width: 38px; height: 22px; border-radius: 999px;
+  background: #cfd4dc; transition: background 0.15s; flex: 0 0 auto;
+}
+.switch__thumb {
+  position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; box-shadow: var(--shadow-sm); transition: transform 0.15s;
+}
+.switch input:checked + .switch__track { background: var(--primary); }
+.switch input:checked + .switch__track .switch__thumb { transform: translateX(16px); }
+.switch input:focus-visible + .switch__track { outline: 2px solid var(--primary); outline-offset: 2px; }
+.switch input:disabled + .switch__track { opacity: 0.5; cursor: not-allowed; }
+.switch__label { font-size: 13px; color: var(--muted); min-width: 52px; }
+
+/* ============================================================
    반응형 (모바일: 사이드바 오버레이)
    ============================================================ */
 @media (max-width: 860px) {
@@ -720,6 +809,9 @@ a:hover { text-decoration: underline; }
   .stat__sub { white-space: normal; }
   .dash__filters .segmented { max-width: 100%; overflow-x: auto; }
   .dash__grid { grid-template-columns: 1fr; }
+  .settings { padding: 20px 14px 32px; }
+  .model-row { flex-wrap: wrap; }
+  .model-row__actions { width: 100%; justify-content: flex-end; }
   .msg__body { max-width: 85%; }
   /* 터치 기기에는 hover가 없으므로 액션 버튼을 항상 노출 */
   .msg__actions { opacity: 1; }

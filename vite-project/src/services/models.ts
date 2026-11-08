@@ -1,10 +1,34 @@
 import { apiFetch } from './http'
 
 /**
- * 선택 가능한 AI 모델 목록.
+ * AI 모델 목록과 사용자별 모델 설정.
  * 모델·표시명·순서는 백엔드 DB(llm_models)에서 관리하므로 프론트는 받아서 보여주기만 한다.
  * (모델을 추가·숨기려면 DB 또는 api/llm_gateway/seed_models.json을 고친다 — 프론트 재빌드 불필요)
+ *
+ * 사용자가 마이 페이지에서 끈 모델은 채팅 화면의 선택 목록에서만 빠진다.
+ * 백엔드는 꺼진 모델의 호출을 막지 않는다 (설정은 화면 정리용).
  */
+
+/** 로컬 모델 상태. 클라우드 모델은 null */
+export type LocalStatus =
+  | 'installed'    // 받아져 있어 바로 사용 가능
+  | 'missing'      // 아직 받지 않음 → 마이 페이지에서 다운로드
+  | 'pulling'      // 서버가 받는 중
+  | 'unreachable'  // Ollama 서버에 연결할 수 없음
+  | 'unmanaged'    // 서버가 모델 파일을 관리하지 않는 런타임 (LM Studio·vLLM)
+
+export interface PullState {
+  status: 'pulling' | 'done' | 'error'
+  /** 0~100. 전체 크기를 아직 모르면 null */
+  percent: number | null
+  completed: number
+  total: number
+  /** Ollama가 보낸 마지막 상태 문구 또는 오류 메시지 */
+  message: string
+  started_at: number
+  finished_at: number | null
+}
+
 export interface ModelOption {
   /** 요청 시 model 값으로 보낼 ID ('접두사/모델명') */
   id: string
@@ -13,6 +37,32 @@ export interface ModelOption {
   /** 선택 목록 그룹 (Google / OpenAI / Anthropic / 로컬 ...) */
   group: string
   isDefault: boolean
+  /** 이 사용자가 켜 둔 모델인지 (기본 켜짐) */
+  enabled: boolean
+  /** 로컬 런타임에서 도는 모델인지 */
+  local: boolean
+  localStatus: LocalStatus | null
+  pull: PullState | null
+  /** 설치된 로컬 모델의 디스크 크기 (바이트) */
+  sizeBytes: number | null
+}
+
+/** 서버(Ollama)에 받아져 있는 모델 하나 */
+export interface StoredModel {
+  /** 삭제 요청에 쓸 ID ('ollama/이름') */
+  id: string
+  name: string
+  sizeBytes: number
+  /** 모델 목록에 등록된 모델인지. false면 목록에서 빠지고 파일만 남은 모델 */
+  registered: boolean
+  label: string | null
+}
+
+export interface LocalStorage {
+  /** Ollama에 연결되었는지 */
+  reachable: boolean
+  totalBytes: number
+  models: StoredModel[]
 }
 
 export interface ModelGroup {
@@ -20,9 +70,58 @@ export interface ModelGroup {
   models: ModelOption[]
 }
 
-/** GET /chatbot/models — 활성 모델 목록 (서버가 sort_order 순으로 정렬해 준다) */
+/** GET /chatbot/models — 활성 모델 전체 + 사용자 설정·로컬 상태 (서버가 sort_order 순으로 정렬해 준다) */
 export async function listModels(): Promise<ModelOption[]> {
   return apiFetch<ModelOption[]>('/chatbot/models')
+}
+
+/** PUT /chatbot/models/preference — 모델 사용/사용 안 함 */
+export async function setModelEnabled(modelId: string, enabled: boolean): Promise<void> {
+  await apiFetch<void>('/chatbot/models/preference', {
+    method: 'PUT',
+    body: JSON.stringify({ modelId, enabled }),
+  })
+}
+
+/** POST /chatbot/models/pull — 로컬 모델 다운로드 시작 (서버 백그라운드로 진행) */
+export async function startPull(modelId: string): Promise<PullState> {
+  return apiFetch<PullState>('/chatbot/models/pull', {
+    method: 'POST',
+    body: JSON.stringify({ modelId }),
+  })
+}
+
+/** GET /chatbot/models/pulls — 모델 ID별 다운로드 상태 */
+export async function listPulls(): Promise<Record<string, PullState>> {
+  return apiFetch<Record<string, PullState>>('/chatbot/models/pulls')
+}
+
+/** GET /chatbot/models/storage — 받아진 로컬 모델 전체와 용량 */
+export async function getLocalStorage(): Promise<LocalStorage> {
+  return apiFetch<LocalStorage>('/chatbot/models/storage')
+}
+
+/** POST /chatbot/models/delete — 로컬 모델 파일 삭제 (서버 전체에서 지워진다) */
+export async function deleteLocalModel(modelId: string): Promise<{ deleted: boolean; sizeBytes: number }> {
+  return apiFetch('/chatbot/models/delete', {
+    method: 'POST',
+    body: JSON.stringify({ modelId }),
+  })
+}
+
+/** 바로 대화에 쓸 수 있는 모델인지 (로컬은 받아져 있어야 함, 상태를 모르는 런타임은 시도 허용) */
+export function isUsable(m: ModelOption): boolean {
+  return !m.local || m.localStatus === 'installed' || m.localStatus === 'unmanaged'
+}
+
+/** 로컬 모델이 쓸 수 없을 때 선택 목록·설정 화면에 붙일 짧은 사유 */
+export function unusableReason(m: ModelOption): string | null {
+  switch (m.localStatus) {
+    case 'missing': return '다운로드 필요'
+    case 'pulling': return m.pull?.percent != null ? `다운로드 중 ${Math.floor(m.pull.percent)}%` : '다운로드 중'
+    case 'unreachable': return 'Ollama 연결 안 됨'
+    default: return null
+  }
 }
 
 /** 서버 정렬 순서를 유지한 채 그룹별로 묶는다 (그룹 순서 = 그룹이 처음 등장한 순서) */
@@ -36,7 +135,19 @@ export function groupModels(models: ModelOption[]): ModelGroup[] {
   return [...groups].map(([group, list]) => ({ group, models: list }))
 }
 
-/** 기본 모델 ID (isDefault가 없으면 첫 번째 모델) */
+/**
+ * 처음 선택할 모델 ID.
+ * 기본 모델이 사용 가능하면 그것, 아니면 사용 가능한 첫 모델, 그것도 없으면 첫 모델.
+ */
 export function defaultModelId(models: ModelOption[]): string {
-  return (models.find((m) => m.isDefault) ?? models[0])?.id ?? ''
+  const usable = models.filter(isUsable)
+  return (usable.find((m) => m.isDefault) ?? usable[0] ?? models[0])?.id ?? ''
+}
+
+/** 1,234,567,890 바이트 → '1.2 GB' */
+export function formatBytes(n: number): string {
+  if (!n) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1000)))
+  return `${(n / 1000 ** i).toFixed(i >= 3 ? 1 : 0)} ${units[i]}`
 }

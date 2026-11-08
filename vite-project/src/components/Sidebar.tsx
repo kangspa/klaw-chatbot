@@ -66,6 +66,13 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         >
           <span aria-hidden>🗂️</span> 대화 내역
         </NavLink>
+        <NavLink
+          to="/settings"
+          className={({ isActive }) => `btn btn--ghost btn--block${isActive ? ' is-active' : ''}`}
+          onClick={onNavigate}
+        >
+          <span aria-hidden>⚙️</span> 마이 페이지
+        </NavLink>
       </div>
 
       <div className="sidebar__list-head">세션 목록</div>

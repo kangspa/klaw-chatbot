@@ -137,6 +137,16 @@ CREATE TABLE IF NOT EXISTS llm_models (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_models_default
     ON llm_models (is_default) WHERE is_default;
 
+-- 사용자가 마이 페이지에서 '사용 안 함'으로 둔 모델. 행이 있으면 꺼진 것이고, 없으면 켜진 것이다.
+-- (새 모델이 추가되면 별도 작업 없이 모두에게 켜진 상태로 보이게 하려고 '끈 것'만 저장한다)
+-- 프론트의 모델 선택 목록에만 반영한다 — 백엔드는 이 설정으로 호출을 막지 않는다.
+CREATE TABLE IF NOT EXISTS user_disabled_models (
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    model_id   TEXT NOT NULL REFERENCES llm_models(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, model_id)
+);
+
 -- 토큰 단가는 LiteLLM 가격표로 계산한다 (api/llm_gateway/pricing.py). 예전 수동 단가 테이블은 정리한다.
 DROP TABLE IF EXISTS llm_model_prices;
 """

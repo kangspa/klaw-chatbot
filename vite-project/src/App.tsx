@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import ChatPage from './pages/ChatPage'
 import HistoryPage from './pages/HistoryPage'
+import SettingsPage from './pages/SettingsPage'
 
 /** 이미 로그인한 사용자가 /login에 오면 대시보드로 보낸다. */
 function GuestOnly({ children }: { children: React.ReactElement }) {
@@ -29,6 +30,8 @@ export default function App() {
           <Route path="/chat" element={<Navigate to="/dashboard" replace />} />
           <Route path="/chat/:sessionId" element={<ChatPage />} />
           <Route path="/history" element={<HistoryPage />} />
+          {/* 마이 페이지: 계정 정보 + 모델 사용 설정·로컬 모델 다운로드 */}
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Route>
 

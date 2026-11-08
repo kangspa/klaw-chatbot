@@ -12,7 +12,8 @@ from typing import Optional
 from langchain_core.messages import AIMessage, HumanMessage
 
 from api.chatbot.functions.insights import LawLookupCallback, record_turn
-from api.llm_gateway import CostTrackingCallback
+from api.llm_gateway import CostTrackingCallback, ModelNotAvailableError
+from api.llm_gateway.local_models import PULL_MANAGER, installed_ollama_models, is_installed, ollama_name
 from api.load_variable import MODEL_REGISTRY
 
 
@@ -20,8 +21,30 @@ async def resolve_model(model: Optional[str]) -> str:
     """
     API로 받은 모델 ID를 DB 등록 모델로 확인한다. 비어 있으면 기본 모델(is_default).
     미등록·비활성 모델이면 ModelNotAvailableError (엔드포인트에서 400으로 변환).
+
+    마이 페이지의 '사용 안 함' 설정으로는 막지 않는다. 다만 로컬 모델이 아직 없으면
+    그래프 깊숙한 곳에서 500으로 터지는 대신 어떻게 해야 하는지 알려주는 오류로 바꾼다.
     """
-    return (await MODEL_REGISTRY.resolve(model)).id
+    spec = await MODEL_REGISTRY.resolve(model)
+    name = ollama_name(spec.id)
+    if name is not None:
+        pull = PULL_MANAGER.get(spec.id)
+        if pull is not None and pull.status == "pulling":
+            pct = pull.to_dict()["percent"]
+            raise ModelNotAvailableError(
+                f"로컬 모델 '{spec.label}'을 다운로드하는 중입니다"
+                f"{f' ({pct:.0f}%)' if pct is not None else ''}. 완료된 뒤 다시 시도하세요."
+            )
+        installed = await installed_ollama_models()
+        if installed is None:
+            raise ModelNotAvailableError(
+                "로컬 모델 서버(Ollama)에 연결할 수 없습니다. 컨테이너가 실행 중인지 확인하세요."
+            )
+        if not is_installed(name, installed):
+            raise ModelNotAvailableError(
+                f"로컬 모델 '{spec.label}'이 아직 다운로드되지 않았습니다. 마이 페이지 > 모델 설정에서 다운로드하세요."
+            )
+    return spec.id
 
 
 async def run_agent_turn(

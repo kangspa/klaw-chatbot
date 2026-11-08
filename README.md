@@ -175,6 +175,29 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
 - 프론트 선택 목록은 `GET /chatbot/models`에서 받아온다 (표시명·그룹·순서 모두 DB 기준).
 - `options`(JSONB)는 LiteLLM 호출 인자로 그대로 넘어간다 (예: Ollama `{"num_ctx": 32768}`).
 
+### 사용자별 모델 설정 (마이 페이지)
+
+`llm_models.enabled`가 서버 전체의 스위치라면, 사용자는 **마이 페이지(`/settings`) > 모델 설정**에서
+채팅 화면 선택 목록에 보일 모델을 각자 켜고 끈다. 끈 모델만 `user_disabled_models`에 저장하므로
+새로 추가된 모델은 모두에게 켜진 상태로 보인다.
+
+- 이 설정은 **화면 정리용**이다. 백엔드는 꺼진 모델의 호출을 막지 않는다.
+- 아직 받지 않은 로컬 모델로 채팅하면 `400 "… 마이 페이지 > 모델 설정에서 다운로드하세요."`를 돌려준다.
+- 로컬(Ollama) 모델은 마이 페이지의 **다운로드** 버튼으로 받고, **삭제** 버튼으로 지운다. 서버가 백그라운드로 받고, 화면은 진행률을 보여준다
+  (페이지를 떠나도 계속 받는다). Ollama는 서버 전체가 공유하므로 한 번 받으면 모든 사용자에게 설치된 것으로 보인다.
+  받을 수 있는 모델은 `llm_models`에 등록된 Ollama 모델로 한정된다.
+- 받은 로컬 모델은 같은 화면의 **삭제** 버튼으로 지워 디스크를 정리한다. 서버 전체에서 지워지며, 목록 항목은 남으므로
+  다시 다운로드하면 된다. **로컬 저장 공간** 영역에 전체 사용량과, 목록에서 빠졌는데 파일만 남은 모델이 함께 보인다.
+
+| API | 용도 |
+| --- | --- |
+| `GET /chatbot/models` | 활성 모델 + 사용자 사용 여부(`enabled`) + 로컬 상태(`localStatus`: installed·missing·pulling·unreachable·unmanaged) |
+| `PUT /chatbot/models/preference` | `{modelId, enabled}` 사용 / 사용 안 함 |
+| `POST /chatbot/models/pull` | `{modelId}` 로컬 모델 다운로드 시작 |
+| `GET /chatbot/models/pulls` | 모델별 다운로드 진행 상태 |
+| `GET /chatbot/models/storage` | Ollama에 받아진 모델 전체와 용량 (`registered: false` = 파일만 남은 모델) |
+| `POST /chatbot/models/delete` | `{modelId}` 로컬 모델 파일 삭제 (받는 중이면 409) |
+
 초기 데이터는 `api/llm_gateway/seed_models.json`이다. 테이블이 비어 있으면 서버 시작 시 자동으로 채워지고,
 이후 JSON을 고쳤다면 아래 스크립트로 반영한다.
 

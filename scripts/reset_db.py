@@ -58,6 +58,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "raglaw_dev_pw")
 QDRANT_COLLECTION = "conversation_history"
 
 DROP_SQL = """
+DROP TABLE IF EXISTS user_disabled_models CASCADE;
 DROP TABLE IF EXISTS chat_messages CASCADE;
 DROP TABLE IF EXISTS chat_sessions CASCADE;
 DROP TABLE IF EXISTS users CASCADE;

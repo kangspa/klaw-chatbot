@@ -3,13 +3,15 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useSessions } from '../context/SessionsContext'
 import { sendChat } from '../services/chatApi'
-import { defaultModelId, groupModels, listModels, type ModelOption } from '../services/models'
+import { defaultModelId, groupModels, isUsable, listModels, unusableReason, type ModelOption } from '../services/models'
 import { branchFromMessage, deleteMessage, getSession, regenerateMessage } from '../services/sessions'
 import { localIsoWithOffset } from '../services/time'
 import type { ChatMessage } from '../types'
 
 /*
  * 모델 목록은 백엔드 DB(llm_models)에서 받아온다 (services/models.ts).
+ * 마이 페이지에서 '사용 안 함'으로 둔 모델은 선택 목록에서 뺀다.
+ * 아직 받지 않은 로컬 모델은 사유를 붙여 비활성 항목으로 보여준다.
  * 법률 검색 노드의 재검색 루프는 모델의 도구 호출(tool calling) 능력에 크게 좌우된다.
  * (도구 호출을 잘 못하면 코드가 재검색을 강제하는 폴백으로 넘어간다 — agent.py의 force_next_search)
  */
@@ -71,14 +73,15 @@ export default function ChatPage() {
     return () => { alive = false }
   }, [session, loading, sessionId, upsert])
 
-  // 선택 가능한 모델 목록을 받아오고, 아직 고른 모델이 없으면 기본 모델을 선택한다
+  // 사용자가 켜 둔 모델만 받아오고, 아직 고른 모델이 없거나 쓸 수 없으면 기본 모델을 선택한다
   useEffect(() => {
     let alive = true
     listModels().then(
-      (list) => {
+      (all) => {
         if (!alive) return
+        const list = all.filter((m) => m.enabled)
         setModels(list)
-        setModel((cur) => (list.some((m) => m.id === cur) ? cur : defaultModelId(list)))
+        setModel((cur) => (list.some((m) => m.id === cur && isUsable(m)) ? cur : defaultModelId(list)))
       },
       () => { if (alive) setError('모델 목록을 불러오지 못했습니다. 기본 모델로 전송됩니다.') },
     )
@@ -231,9 +234,14 @@ export default function ChatPage() {
             {models.length === 0 && <option value="">불러오는 중…</option>}
             {groupModels(models).map((g) => (
               <optgroup key={g.group} label={g.group}>
-                {g.models.map((m) => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
-                ))}
+                {g.models.map((m) => {
+                  const reason = unusableReason(m)
+                  return (
+                    <option key={m.id} value={m.id} disabled={!isUsable(m)}>
+                      {reason ? `${m.label} · ${reason}` : m.label}
+                    </option>
+                  )
+                })}
               </optgroup>
             ))}
           </select>

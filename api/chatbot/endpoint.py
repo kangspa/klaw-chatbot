@@ -10,7 +10,6 @@ from api.chatbot.functions import session_store
 from api.chatbot.functions.chat_runner import describe_exception, resolve_model, run_agent_turn
 from api.chatbot.functions.insights import schedule_session_summary
 from api.llm_gateway import ModelNotAvailableError
-from api.load_variable import MODEL_REGISTRY
 from api.db import is_ready as db_is_ready
 
 router = APIRouter()
@@ -43,18 +42,7 @@ class PlanChatResponse(BaseModel):
     )
 
 
-class ModelOption(BaseModel):
-    id: str = Field(..., description="요청 시 model 값으로 보낼 모델 ID ('접두사/모델명')")
-    label: str = Field(..., description="선택 목록에 보일 이름")
-    group: str = Field(..., description="선택 목록 그룹")
-    isDefault: bool = Field(..., description="기본 모델 여부")
-
-
-@router.get("/models", response_model=list[ModelOption])
-async def list_models(current_user: dict[str, Any] = Depends(get_current_user)):
-    """선택 가능한 모델 목록 (DB llm_models 중 활성 모델, sort_order 순)."""
-    specs = await MODEL_REGISTRY.list_enabled()
-    return [ModelOption(id=s.id, label=s.label, group=s.group, isDefault=s.is_default) for s in specs]
+# 모델 목록·사용 설정·로컬 모델 다운로드는 api/chatbot/models.py (/chatbot/models/...)
 
 
 @router.post("/chat", response_model=PlanChatResponse)
