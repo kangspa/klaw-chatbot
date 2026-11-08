@@ -26,7 +26,7 @@ class PlanChatRequest(BaseModel):
             "사용할 AI 모델 ID. DB(llm_models)에 등록·활성화된 '접두사/모델명'만 허용하며, "
             "비우면 기본 모델(is_default)을 사용합니다. 목록은 GET /chatbot/models. "
             "예: 'gemini/gemini-3.5-flash-lite', 'openai/gpt-6-luna', "
-            "'anthropic/claude-sonnet-5', 'ollama/hf.co/google/gemma-4-12B-it-qat-q4_0-gguf', "
+            "'anthropic/claude-sonnet-5-5', 'ollama/hf.co/google/gemma-4-12B-it-qat-q4_0-gguf', "
             "'vllm/Qwen/Qwen3.8-27B', 'lmstudio/qwen3.8-27b'"
         ),
     )

@@ -16,7 +16,7 @@ MAX_RETRIES = 3          # 모델당 일시 오류 재시도 횟수(기본)
 BACKOFF_BASE = 1.0       # 지수 백오프 기준(초): 1 → 2 → 4
 
 # 빈 응답(RECITATION/SAFETY 등)이나 일시 오류 시 순차로 시도할 폴백 모델 (DB llm_models에 등록·활성이어야 함).
-# .env에 CHAT_FALLBACK_MODELS="openai/gpt-6-luna,anthropic/claude-haiku-4-5-20251001" 형태로 지정.
+# .env에 CHAT_FALLBACK_MODELS="openai/gpt-6-luna,anthropic/claude-sonnet-5-5" 형태로 지정.
 # (해당 provider API 키가 있어야 실제로 폴백됨. 미지정 시 폴백 없이 처리.)
 FALLBACK_MODELS = [m.strip() for m in os.getenv("CHAT_FALLBACK_MODELS", "").split(",") if m.strip()]
 

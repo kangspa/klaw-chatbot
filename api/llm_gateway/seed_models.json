@@ -32,8 +32,8 @@
       "options": {}
     },
     {
-      "id": "gemini/gemini-3.1-pro-preview",
-      "label": "Gemini 3.1 Pro",
+      "id": "gemini/gemini-4-argon",
+      "label": "Gemini 4 Argon",
       "group": "Google",
       "sort_order": 12,
       "enabled": true,
@@ -52,8 +52,8 @@
       "options": {}
     },
     {
-      "id": "openai/gpt-6-sol",
-      "label": "GPT-6 Sol",
+      "id": "openai/gpt-6.1-sol",
+      "label": "GPT-6.1 Sol",
       "group": "OpenAI",
       "sort_order": 21,
       "enabled": true,
@@ -62,18 +62,8 @@
       "options": {}
     },
     {
-      "id": "anthropic/claude-haiku-4-5-20251001",
-      "label": "Claude Haiku 4.5",
-      "group": "Anthropic",
-      "sort_order": 30,
-      "enabled": true,
-      "is_default": false,
-      "fixed_temperature": false,
-      "options": {}
-    },
-    {
-      "id": "anthropic/claude-sonnet-5",
-      "label": "Claude Sonnet 5",
+      "id": "anthropic/claude-sonnet-5-5",
+      "label": "Claude Sonnet 5.5",
       "group": "Anthropic",
       "sort_order": 31,
       "enabled": true,
@@ -90,18 +80,6 @@
       "is_default": false,
       "fixed_temperature": true,
       "options": {}
-    },
-    {
-      "id": "ollama/hf.co/google/gemma-4-E2B-it-qat-q4_0-gguf",
-      "label": "Gemma 4 E2B",
-      "group": "로컬",
-      "sort_order": 40,
-      "enabled": true,
-      "is_default": false,
-      "fixed_temperature": false,
-      "options": {
-        "num_ctx": 32768
-      }
     },
     {
       "id": "ollama/hf.co/google/gemma-4-12B-it-qat-q4_0-gguf",

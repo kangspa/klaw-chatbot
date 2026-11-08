@@ -38,7 +38,10 @@ dependencies = [
     # --- 유틸 ---
     "cachetools>=7.0.4",
     "pydantic>=2.10.0",
-    "litellm>=1.104.1",
+    # litellm 1.106+는 도구를 붙인 호출에서 mcp 2.3 전용 심볼(mcp.types.CacheableResult)을 import해 실패한다.
+    # langchain-mcp-adapters가 mcp<2를 요구하므로, 새 모델(Gemini 4 Argon·GPT-6.1 Sol·Claude Sonnet 5.5) 가격표를
+    # 내장한 1.105 유지보수 라인으로 고정한다. 올리기 전에 도구 호출(bind_tools) 경로를 반드시 확인할 것.
+    "litellm>=1.105.7,<1.106",
     "langchain-litellm>=0.11.0",
 ]
 
