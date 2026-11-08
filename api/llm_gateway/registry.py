@@ -27,7 +27,8 @@ class ModelSpec:
     is_default: bool = False
     fixed_temperature: bool = False
     options: dict = field(default_factory=dict)
-    is_custom: bool = False   # 마이 페이지에서 사용자가 추가한 Ollama 모델 (인스턴스 생성과 무관해 build_version에 넣지 않는다)
+    is_custom: bool = False   # 마이 페이지에서 사용자가 추가한 모델 (인스턴스 생성과 무관해 build_version에 넣지 않는다)
+    meta: dict = field(default_factory=dict)   # 화면 표시용 부가 정보 (호출에는 쓰지 않는다)
 
     @property
     def build_version(self) -> str:

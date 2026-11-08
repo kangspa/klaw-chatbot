@@ -84,7 +84,7 @@
     {
       "id": "ollama/hf.co/google/gemma-4-12B-it-qat-q4_0-gguf",
       "label": "Gemma 4 12B",
-      "group": "로컬",
+      "group": "Ollama",
       "sort_order": 41,
       "enabled": true,
       "is_default": false,
@@ -96,7 +96,7 @@
     {
       "id": "ollama/qwen3.8:27b-q4_K_M",
       "label": "Qwen 3.8 27B",
-      "group": "로컬",
+      "group": "Ollama",
       "sort_order": 42,
       "enabled": true,
       "is_default": false,

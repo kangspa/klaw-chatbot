@@ -49,8 +49,24 @@ export interface ModelOption {
   custom: boolean
   /** Ollama 모델명 (Ollama 모델만) */
   ollamaName: string | null
-  /** 도구 호출 지원 여부 (설치된 커스텀 모델만 확인, 모르면 null). false면 법률 검색을 할 수 없다 */
+  /** 도구 호출 지원 여부 (커스텀·Hugging Face 모델만 확인, 모르면 null). false면 법률 검색을 할 수 없다 */
   supportsTools: boolean | null
+  /** 화면 표시용 부가 정보 (Hugging Face: repo·provider·단가 등) */
+  meta: HfMeta
+}
+
+/** Hugging Face 모델 부가 정보 */
+export interface HfMeta {
+  source?: 'huggingface'
+  repo?: string
+  /** 고정한 추론 제공사 (novita·together 등) */
+  provider?: string
+  supportsTools?: boolean
+  inputPer1M?: number | null
+  outputPer1M?: number | null
+  contextTokens?: number | null
+  /** 이 모델을 제공하는 다른 제공사들 */
+  providers?: string[]
 }
 
 /** 서버(Ollama)에 받아져 있는 모델 하나 */
@@ -248,4 +264,16 @@ export async function deleteApiModel(modelId: string): Promise<{ deleted: boolea
 /** POST /chatbot/models/api/restore — 삭제했던 기본 제공 모델 되살리기 */
 export async function restoreApiDefaults(provider: ApiProvider): Promise<{ restored: number }> {
   return apiFetch('/chatbot/models/api/restore', { method: 'POST', body: JSON.stringify({ provider }) })
+}
+
+// ────────────── Hugging Face (Inference Providers) ──────────────
+
+/** POST /chatbot/models/hf — Hub에서 확인한 뒤 도구 호출을 지원하는 추론 제공사로 등록 */
+export async function addHfModel(name: string): Promise<{ modelId: string; label: string } & HfMeta> {
+  return apiFetch('/chatbot/models/hf', { method: 'POST', body: JSON.stringify({ name }) })
+}
+
+/** POST /chatbot/models/hf/delete */
+export async function deleteHfModel(modelId: string): Promise<{ deleted: boolean }> {
+  return apiFetch('/chatbot/models/hf/delete', { method: 'POST', body: JSON.stringify({ modelId }) })
 }

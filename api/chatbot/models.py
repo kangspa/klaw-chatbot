@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from api.auth.deps import get_current_user
 from api.chatbot.functions import model_prefs
 from api.db import get_pool, is_ready as db_is_ready
-from api.llm_gateway import catalog, store
+from api.llm_gateway import catalog, hf_models, store
 from api.llm_gateway.local_models import (
     PULL_MANAGER,
     delete_ollama_model,
@@ -67,6 +67,7 @@ class ModelOption(BaseModel):
         default=None,
         description="도구 호출 지원 여부 (설치된 커스텀 모델만 확인). false면 법률 검색 도구를 쓸 수 없어 답변이 실패한다",
     )
+    meta: dict[str, Any] = Field(default_factory=dict, description="화면 표시용 부가 정보 (예: Hugging Face 추론 제공사·단가)")
 
 
 class PreferenceRequest(BaseModel):
@@ -146,7 +147,7 @@ async def list_models(current_user: dict[str, Any] = Depends(get_current_user)):
         elif local:
             status = "unmanaged"
         size = installed_size(name, installed) if (name is not None and installed and status == "installed") else None
-        supports_tools = None
+        supports_tools = s.meta.get("supportsTools") if s.meta else None
         if s.is_custom and status == "installed":
             # 커스텀 모델은 처음 보는 모델이라 도구 호출 지원을 확인해 경고한다 (등록 모델은 검증을 거쳐 들어왔다)
             caps = await ollama_capabilities(name)
@@ -154,7 +155,7 @@ async def list_models(current_user: dict[str, Any] = Depends(get_current_user)):
         out.append(ModelOption(
             id=s.id, label=s.label, group=s.group, isDefault=s.is_default,
             enabled=s.id not in disabled, local=local, localStatus=status, pull=pull, sizeBytes=size,
-            custom=s.is_custom, ollamaName=name, supportsTools=supports_tools,
+            custom=s.is_custom, ollamaName=name, supportsTools=supports_tools, meta=s.meta or {},
         ))
     return out
 
@@ -453,3 +454,54 @@ async def restore_api_defaults(data: RestoreRequest, current_user: dict[str, Any
         restored = await store.restore_defaults(conn, ids)
     await MODEL_REGISTRY.refresh(force=True)
     return {"provider": data.provider, "restored": restored}
+
+
+# ────────────────────────── Hugging Face (Inference Providers) ──────────────────────────
+class HfAddRequest(BaseModel):
+    name: str = Field(..., description="Hugging Face 모델 ID 'org/model' (Hub 주소를 붙여 넣어도 된다)")
+    label: Optional[str] = None
+
+
+@router.post("/hf", status_code=201)
+async def add_hf_model(data: HfAddRequest, current_user: dict[str, Any] = Depends(get_current_user)):
+    """
+    Hugging Face 모델을 추가한다. Hub에서 모델·추론 제공사를 확인하고, 도구 호출을 지원하는 제공사를 골라
+    'huggingface/<제공사>/<org>/<model>'로 등록한다 (api/llm_gateway/hf_models.py).
+    """
+    _require_db()
+    try:
+        repo = hf_models.normalize_repo(data.name)
+        info = await hf_models.inspect(repo)
+    except hf_models.HfModelError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Hugging Face에 연결하지 못했습니다: {type(e).__name__}")
+    repo = info["repo"]
+    registered = await MODEL_REGISTRY.list_all()
+    if any(s.id.startswith("huggingface/") and hf_models.split_hf_id(s.id)[1] == repo for s in registered):
+        raise HTTPException(status_code=409, detail=f"이미 목록에 있는 모델입니다: {repo}")
+    chosen = info["chosen"]
+    model_id = hf_models.model_id_for(repo, chosen["provider"])
+    label = _clean_label(data.label, repo.split("/", 1)[1])
+    meta = {"source": "huggingface", "repo": repo, "provider": chosen["provider"],
+            "supportsTools": info["supportsTools"], "inputPer1M": chosen["inputPer1M"],
+            "outputPer1M": chosen["outputPer1M"], "contextTokens": chosen["contextTokens"],
+            "providers": [p["provider"] for p in info["providers"]]}
+    async with get_pool().acquire() as conn:
+        await store.add_api_model(conn, model_id, label, "Hugging Face", current_user["id"], meta=meta)
+    await MODEL_REGISTRY.refresh(force=True)
+    print(f"[models] Hugging Face 모델 추가: {model_id} (요청: {current_user.get('email')})")
+    return {"modelId": model_id, "label": label, **meta}
+
+
+@router.post("/hf/delete")
+async def delete_hf_model(data: ApiModelRequest, current_user: dict[str, Any] = Depends(get_current_user)):
+    _require_db()
+    if not data.modelId.startswith("huggingface/"):
+        raise HTTPException(status_code=400, detail="Hugging Face 모델이 아닙니다.")
+    async with get_pool().acquire() as conn:
+        kind = await store.remove_model(conn, data.modelId)
+    if kind == "missing":
+        raise HTTPException(status_code=404, detail=f"목록에 없는 모델입니다: {data.modelId}")
+    await MODEL_REGISTRY.refresh(force=True)
+    return {"modelId": data.modelId, "deleted": True}

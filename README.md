@@ -189,6 +189,11 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
   - 기본 제공 모델도 지울 수 있다. 지운 기본 모델은 `llm_models_removed`에 기억해 `sync_llm_models.py`가 되살리지 않으며,
     탭의 **기본 모델 복원**으로 되살린다. 기본 모델(`is_default`)은 지울 수 없다.
   - 회사 API 키(`GEMINI_API_KEY` 등)가 `.env`에 없으면 탭에 경고를 띄운다.
+- **Hugging Face 탭**: 커스텀 모델처럼 모델 ID(`org/model`)를 입력해 추가한다 (Inference Providers, `api/llm_gateway/hf_models.py`).
+  Hub에서 모델과 'live' 추론 제공사를 확인하고, **도구 호출을 지원하는 제공사**를 골라 `huggingface/<제공사>/<org>/<model>`로 고정한다
+  (고정하지 않으면 도구 호출을 못 하는 제공사로 라우팅될 수 있다). 없는 모델·제공사 없는 모델은 등록하지 않는다.
+  비용은 LiteLLM 가격표에 없어 대시보드에 0으로 집계된다 (청구는 HF 계정 — 선불 크레딧이 없으면 호출이 거절된다).
+- **Ollama 탭**: 등록된 Ollama 모델의 다운로드·삭제. (로컬 런타임은 현재 Ollama만 지원한다)
 - 아직 받지 않은 로컬 모델로 채팅하면 `400 "… 마이 페이지 > 모델 설정에서 다운로드하세요."`를 돌려준다.
 - 로컬(Ollama) 모델은 마이 페이지의 **다운로드** 버튼으로 받고, **삭제** 버튼으로 지운다. 서버가 백그라운드로 받고, 화면은 진행률을 보여준다
   (페이지를 떠나도 계속 받는다). Ollama는 서버 전체가 공유하므로 한 번 받으면 모든 사용자에게 설치된 것으로 보인다.
@@ -218,6 +223,8 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
 | `POST /chatbot/models/api` | `{modelId}` API 모델 추가 |
 | `POST /chatbot/models/api/delete` | `{modelId}` API 모델 삭제 (기본 제공 모델은 복원 가능, 기본 모델은 불가) |
 | `POST /chatbot/models/api/restore` | `{provider}` 삭제한 기본 제공 모델 되살리기 |
+| `POST /chatbot/models/hf` | `{name, label?}` Hugging Face 모델 추가 (Hub 확인 후 도구 호출 지원 제공사로 고정) |
+| `POST /chatbot/models/hf/delete` | `{modelId}` Hugging Face 모델 삭제 |
 | `GET /chatbot/runtime` | Ollama·LiteLLM 현재/최신/(LiteLLM) 최신 호환 버전, 릴리스 목록, 진행 중·마지막 작업 |
 | `POST /chatbot/runtime/update` | `{ollama?, litellm?}` 버전 변경 시작 (둘 다 주면 한 번에) |
 | `GET /chatbot/runtime/update` | 진행 단계·로그 |

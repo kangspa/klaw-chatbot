@@ -17,11 +17,12 @@ import {
 } from '../services/models'
 import { formatWhen } from '../services/time'
 import ApiModelsTab from '../components/settings/ApiModelsTab'
+import HfModelsTab from '../components/settings/HfModelsTab'
 import CustomModelsCard from '../components/settings/CustomModelsCard'
 import RuntimeCard from '../components/settings/RuntimeCard'
 import { LocalBadge, ModelSwitch, PullProgress } from '../components/settings/ModelBits'
 
-type ModelTab = ApiProvider | 'local'
+type ModelTab = ApiProvider | 'huggingface' | 'local'
 
 /** 다운로드 진행률 조회 주기 (받는 중인 모델이 있을 때만 조회한다) */
 const PULL_POLL_MS = 1500
@@ -30,7 +31,7 @@ const PULL_POLL_MS = 1500
  * 마이 페이지.
  *  - 계정 정보
  *  - 모델 설정: 회사별 탭(Google·OpenAI·Anthropic)에서 API 모델을 추가·삭제하고 켜고 끈다
- *    (components/settings/ApiModelsTab). '로컬' 탭은 등록된 로컬 모델의 다운로드·삭제.
+ *    (components/settings/ApiModelsTab). 'Hugging Face' 탭은 모델 ID로 추가(HfModelsTab), 'Ollama' 탭은 등록된 로컬 모델의 다운로드·삭제.
  *  - 커스텀 모델: Ollama 모델명을 입력해 추가·이름 변경·삭제 (components/settings/CustomModelsCard)
  *  - 로컬 저장 공간: 서버에 받아진 모델 용량. 목록에서 빠지고 파일만 남은 모델도 여기서 지운다.
  *  - 런타임 버전: Ollama·LiteLLM 버전 변경, 둘 다 한 번에도 가능 (components/settings/RuntimeCard)
@@ -154,13 +155,15 @@ export default function SettingsPage() {
     }
   }
 
-  // API 모델은 회사별 탭, 등록된 로컬 모델은 '로컬' 탭, 사용자가 추가한 Ollama 모델은 커스텀 모델 카드
+  // API 모델은 회사별 탭, 등록된 Ollama 모델은 'Ollama' 탭, 사용자가 추가한 Ollama 모델은 커스텀 모델 카드
   const apiModelsOf = (p: ApiProvider) => models.filter((m) => apiProviderOf(m.id) === p)
   const localModels = models.filter((m) => m.local && !m.custom)
+  const hfModels = models.filter((m) => m.id.startsWith('huggingface/'))
   const customModels = models.filter((m) => m.local && m.custom)
   const tabs: { id: ModelTab; label: string; count: number }[] = [
     ...API_PROVIDERS.map((p) => ({ id: p.id as ModelTab, label: p.label, count: apiModelsOf(p.id).length })),
-    { id: 'local', label: '로컬', count: localModels.length },
+    { id: 'huggingface', label: 'Hugging Face', count: hfModels.length },
+    { id: 'local', label: 'Ollama', count: localModels.length },
   ]
 
   // 목록에서 빠졌는데 서버에 파일만 남은 모델 (용량만 차지한다)
@@ -221,7 +224,7 @@ export default function SettingsPage() {
             <div className="tabs__panel" role="tabpanel">
               {tab === 'local' ? (
                 localModels.length === 0 ? (
-                  <p className="settings__empty">등록된 로컬 모델이 없습니다. 아래 ‘커스텀 모델’에서 추가하세요.</p>
+                  <p className="settings__empty">등록된 Ollama 모델이 없습니다. 아래 ‘커스텀 모델’에서 추가하세요.</p>
                 ) : (
                   <ul className="model-list">
                     {localModels.map((m) => (
@@ -239,6 +242,14 @@ export default function SettingsPage() {
                     ))}
                   </ul>
                 )
+              ) : tab === 'huggingface' ? (
+                <HfModelsTab
+                  models={hfModels}
+                  saving={saving}
+                  enabledCount={enabledCount}
+                  onToggle={toggle}
+                  onChanged={reload}
+                />
               ) : (
                 <ApiModelsTab
                   key={tab}

@@ -141,6 +141,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_models_default
 -- seed JSON에 없으므로 sync_llm_models.py --prune 대상에서 제외한다.
 ALTER TABLE llm_models ADD COLUMN IF NOT EXISTS is_custom BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE llm_models ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES users(id) ON DELETE SET NULL;
+-- 화면 표시용 부가 정보 (예: Hugging Face 추론 제공사·도구 호출 지원 여부). options와 달리 모델 호출에는 넘기지 않는다.
+ALTER TABLE llm_models ADD COLUMN IF NOT EXISTS meta JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 -- 마이 페이지에서 삭제한 기본(seed) 모델. sync_llm_models.py가 seed JSON으로 되살리지 않도록 기억해 둔다.
 -- 마이 페이지의 '기본 모델 복원'이 여기서 지우고 seed JSON 값으로 다시 넣는다.
