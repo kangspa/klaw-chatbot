@@ -32,39 +32,37 @@ docker compose up -d --build
 }
 ```
 
-# 회원가입 / 로그인 (Google 계정 연동)
+# 사용자 / Google 계정 연결 (선택)
 
-로그인 수단은 **Google 계정 연동 하나**뿐이며, **최초 로그인이 곧 회원가입**이다. 별도 가입 절차나 비밀번호가 없다.
+이 앱은 웹 서비스가 아니라 **각자의 PC에서 띄워 쓰는 개인용 클라이언트**다. 그래서 **로그인 없이 모든 기능을 쓴다.**
+서버가 처음 뜰 때 이 PC의 **로컬 사용자**(`users.is_local`) 하나를 만들고, 모든 API가 토큰 없이 그 사용자로 동작한다
+(`api/auth/deps.py`). 모델 호출은 각자 입력한 API 키와 이 PC의 로컬 모델을 쓴다.
+
+**Google 계정 연결은 선택 사항**이다. 연결한 계정의 개인 Google 드라이브에 대화 내역·API 키·설정을 저장하는 용도로 쓴다.
+연결해도 사용자가 바뀌지 않고 **같은 로컬 사용자 행에 Google 정보만 채우므로**, 연결 전에 나눈 대화·설정이 연결 후·해제 후에도 그대로 이어진다.
 
 ```
-[브라우저] Google 로그인 버튼 (GIS)
+[마이 페이지] Google 계정 연결 버튼 (GIS)
     │  ① Google이 서명한 ID 토큰(credential)
     ▼
 [백엔드] POST /auth/google
     │  ② Google 공개키(JWKS)로 서명·aud·iss·exp 검증
-    │  ③ users 테이블에 google_sub 기준 upsert  ← 최초면 이때 가입
-    │  ④ 우리 서버가 서명한 액세스 토큰(JWT) 발급
-    ▼
-[브라우저] 이후 모든 API 호출에 Authorization: Bearer <token>
+    │  ③ 로컬 사용자 행에 google_sub·이메일·이름·사진 기록 (액세스 토큰은 발급하지 않는다)
 ```
 
-- Google ID 토큰은 로그인 순간에만 쓰고 저장하지 않는다.
-- 계정의 진짜 키는 이메일이 아니라 Google이 주는 불변 식별자 `google_sub`이다. 사용자가 Gmail 주소를 바꿔도 같은 계정으로 인식되어 대화 기록이 유지된다.
-- 앱 내부에서는 `users.id`(UUID)를 쓰고, `google_sub`은 API 응답으로 내보내지 않는다.
-- 세션/메시지의 소유자는 `chat_sessions.owner_id → users.id` 외래키로 묶인다. **회원 탈퇴 시 대화가 CASCADE로 함께 삭제**되고, Qdrant 벡터도 세션 단위로 정리된다.
+- Google ID 토큰은 연결 순간에만 쓰고 저장하지 않는다. `google_sub`은 API 응답으로 내보내지 않는다.
+- 예전(로그인 필수 시절)에 만든 Google 사용자만 있는 DB라면, 가장 최근에 쓴 사용자를 로컬 사용자로 삼아 그 데이터를 잇는다.
 
-## 인증 API
+## 사용자 API
 
 | Method | Path | 동작 |
 | --- | --- | --- |
-| `GET` | `/auth/config` | 프론트가 쓸 Google 클라이언트 ID (비밀값 아님) |
-| `POST` | `/auth/google` | ID 토큰 검증 → 로그인/자동 가입 → 액세스 토큰 발급 |
-| `GET` | `/auth/me` | 토큰 유효성 확인 + 최신 회원 정보 |
-| `DELETE` | `/auth/me` | 회원 탈퇴 (대화 원문·벡터 전부 삭제) |
+| `GET` | `/auth/config` | 프론트가 쓸 Google 클라이언트 ID (비밀값 아님, 없으면 연결 버튼 대신 안내) |
+| `GET` | `/auth/me` | 로컬 사용자 정보와 Google 연결 여부 (`googleLinked`) |
+| `POST` | `/auth/google` | ID 토큰 검증 → 로컬 사용자에 Google 계정 연결 |
+| `POST` | `/auth/google/unlink` | 연결 해제 (데이터는 그대로) |
 
-`/chatbot/**` 전 경로는 로그인 필수다. 사용자 id는 요청 본문이 아니라 토큰에서 꺼내므로 클라이언트가 남의 id를 넣어 접근할 수 없고, 남의 세션은 403이 아니라 **404**로 응답해 세션 존재 여부 자체를 감춘다.
-
-## Google Cloud Console 설정 (최초 1회)
+## Google Cloud Console 설정 (Google 계정 연결을 쓸 때만, 최초 1회)
 
 1. [Google Cloud Console](https://console.cloud.google.com/) → **API 및 서비스 → OAuth 동의 화면** 구성 (외부 / 테스트 사용자에 본인 계정 추가)
 2. **사용자 인증 정보 → 사용자 인증 정보 만들기 → OAuth 클라이언트 ID**
@@ -99,7 +97,7 @@ docker compose up -d --build
 
 | Method | Path | 동작 |
 | --- | --- | --- |
-| `GET` | `/chatbot/sessions` | 로그인한 회원의 세션 목록 (메시지 포함, 최근 활동순) |
+| `GET` | `/chatbot/sessions` | 로컬 사용자의 세션 목록 (메시지 포함, 최근 활동순) |
 | `POST` | `/chatbot/sessions` | 세션 생성 `{ title? }` |
 | `GET` | `/chatbot/sessions/{sessionId}` | 세션 + 메시지 전체 |
 | `PATCH` | `/chatbot/sessions/{sessionId}` | 제목 변경 `{ title }` |
@@ -135,9 +133,7 @@ cd vite-project && npm run dev   # 프론트 (http://localhost:5173)
 | 변수 | 설명 |
 | --- | --- |
 | `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | `docker-compose.yml`의 postgres 서비스와 값이 일치해야 한다 |
-| `GOOGLE_CLIENT_ID` | Google OAuth 웹 클라이언트 ID. **비어 있으면 로그인 화면에 안내 문구가 뜨고 로그인할 수 없다** |
-| `APP_JWT_SECRET` | 액세스 토큰 서명 키. 비워두면 서버 시작마다 임시 키가 생성되어 재시작 시 모든 로그인이 풀린다 |
-| `APP_JWT_TTL_SECONDS` | 토큰 수명(초). 기본 7일 |
+| `GOOGLE_CLIENT_ID` | (선택) Google OAuth 웹 클라이언트 ID. 비어 있어도 앱은 그대로 쓰고, 마이 페이지의 Google 계정 연결만 안내 문구로 바뀐다 |
 | `ANNEX_OCR_ENABLED` | 이미지 기반 별표(PDF) 응답을 PaddleOCR로 텍스트화하는 후처리. 기본 켜짐, `0`이면 끔 |
 | `CHAT_FALLBACK_MODELS` | 기본 모델 실패(429 등) 시 순차 폴백할 모델 목록 (쉼표 구분, 선택). DB에 등록·활성화된 모델만 사용 |
 | `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | 각 클라우드 모델 호출용. Gemini 키는 임베딩(대화 기억)에도 쓰이므로 필수 |

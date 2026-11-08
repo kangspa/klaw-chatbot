@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useAuth } from '../context/AuthContext'
 import {
   deleteLocalModel,
   API_PROVIDERS,
@@ -15,7 +14,7 @@ import {
   type ModelOption,
   type PullState,
 } from '../services/models'
-import { formatWhen } from '../services/time'
+import AccountCard from '../components/settings/AccountCard'
 import ApiModelsTab from '../components/settings/ApiModelsTab'
 import CustomModelsCard from '../components/settings/CustomModelsCard'
 import RuntimeCard from '../components/settings/RuntimeCard'
@@ -28,7 +27,7 @@ const PULL_POLL_MS = 1500
 
 /**
  * 마이 페이지.
- *  - 계정 정보
+ *  - 계정: 로컬 사용자 + Google 계정 연결(선택 — 개인 드라이브 저장용, components/settings/AccountCard)
  *  - 모델 설정: 회사별 탭(Google·OpenAI·Anthropic)에서 API 모델을 추가·삭제하고 켜고 끈다
  *    (components/settings/ApiModelsTab). 'Ollama' 탭은 등록된 로컬 모델의 다운로드·삭제.
  *  - 커스텀 모델: Ollama 모델명을 입력해 추가·이름 변경·삭제 (components/settings/CustomModelsCard)
@@ -39,7 +38,6 @@ const PULL_POLL_MS = 1500
  * 로컬 모델은 서버(Ollama)에 한 번 받으면 모든 사용자에게 설치된 상태로 보이고, 지우면 모두에게서 지워진다.
  */
 export default function SettingsPage() {
-  const { user } = useAuth()
   const [models, setModels] = useState<ModelOption[]>([])
   const [tab, setTab] = useState<ModelTab>('gemini')
   const [loading, setLoading] = useState(true)
@@ -174,21 +172,7 @@ export default function SettingsPage() {
         <p className="settings__desc">계정 정보와 채팅에서 사용할 AI 모델을 관리합니다.</p>
       </header>
 
-      <section className="settings__card">
-        <h2 className="settings__card-title">계정</h2>
-        <div className="account">
-          {user?.picture ? (
-            <img className="account__avatar" src={user.picture} alt="" referrerPolicy="no-referrer" />
-          ) : (
-            <span className="account__avatar account__avatar--initial" aria-hidden>{user?.name?.[0]?.toUpperCase() ?? '?'}</span>
-          )}
-          <div className="account__body">
-            <div className="account__name">{user?.name}</div>
-            <div className="account__email">{user?.email}</div>
-            {user?.createdAt && <div className="account__meta">가입 {formatWhen(user.createdAt)}</div>}
-          </div>
-        </div>
-      </section>
+      <AccountCard />
 
       <section className="settings__card">
         <div className="settings__card-head">

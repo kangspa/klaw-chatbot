@@ -29,9 +29,9 @@ _POOL: asyncpg.Pool | None = None
 
 
 SCHEMA_SQL = """
--- 회원 정보. 로그인은 Google 계정 연동만 지원한다.
--- 이메일은 변경될 수 있으므로 Google이 발급하는 불변 식별자(sub)를 계정의 진짜 키로 삼고,
--- 애플리케이션 내부에서는 별도 UUID(id)를 사용해 외부 식별자와 분리한다.
+-- 사용자. 개인 PC에서 띄워 쓰는 서비스라 로그인 없이 '로컬 사용자'(is_local) 하나로 동작한다.
+-- Google 계정은 선택 사항이며, 연결하면 같은 로컬 사용자 행에 google_sub·이메일·이름·사진을 채운다
+-- (로그인 전후로 사용자가 바뀌지 않아 대화·설정이 그대로 이어진다). 내부에서는 UUID(id)만 쓴다.
 CREATE TABLE IF NOT EXISTS users (
     id             TEXT PRIMARY KEY,          -- 내부 사용자 UUID (chat_sessions.owner_id가 참조)
     google_sub     TEXT UNIQUE NOT NULL,      -- Google 계정 고유 식별자 (변하지 않음)
@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+
+-- 로그인 선택 사항화: Google 정보가 없는 로컬 사용자를 허용하고, 로컬 사용자는 하나만 둔다
+ALTER TABLE users ALTER COLUMN google_sub DROP NOT NULL;
+ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_local BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_local ON users (is_local) WHERE is_local;
 
 CREATE TABLE IF NOT EXISTS chat_sessions (
     id                      TEXT PRIMARY KEY,               -- = LangGraph thread_id = Qdrant payload.thread_id

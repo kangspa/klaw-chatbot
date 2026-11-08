@@ -1,9 +1,17 @@
-"""회원 정보 Postgres 저장소."""
+"""
+사용자 Postgres 저장소.
+
+개인 PC에서 띄워 쓰는 서비스라 로그인 없이 '로컬 사용자' 하나로 동작한다 (users.is_local).
+Google 계정 연결은 선택 사항이며, 연결해도 사용자가 바뀌지 않고 같은 행에 Google 정보만 채운다.
+그래서 연결 전에 나눈 대화·사용량·모델 설정이 연결 후에도 그대로 이어진다.
+"""
 
 import uuid
 from typing import Any, Optional
 
 from api.db import get_pool
+
+LOCAL_NAME = "로컬 사용자"
 
 
 def _user_row(row) -> dict[str, Any]:
@@ -16,53 +24,74 @@ def _user_row(row) -> dict[str, Any]:
         "picture": row["picture"],
         "createdAt": row["created_at"].isoformat(),
         "lastLoginAt": row["last_login_at"].isoformat() if row["last_login_at"] else None,
+        "googleLinked": row["google_sub"] is not None,
     }
 
 
-async def upsert_google_user(claims: dict[str, Any]) -> dict[str, Any]:
+async def ensure_local_user() -> dict[str, Any]:
     """
-    Google ID 토큰의 claims로 회원을 생성하거나 갱신한다(로그인 = 최초 가입 겸용).
+    로컬 사용자를 돌려준다. 없으면 만든다.
+    예전(로그인 필수 시절)에 만든 Google 사용자만 있으면, 가장 최근에 쓴 사용자를 로컬 사용자로 삼아 그 데이터를 잇는다.
+    """
+    async with get_pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM users WHERE is_local")
+        if row:
+            return _user_row(row)
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """UPDATE users SET is_local = TRUE
+                    WHERE id = (SELECT id FROM users ORDER BY last_login_at DESC NULLS LAST, created_at DESC LIMIT 1)
+                   RETURNING *"""
+            )
+            if row is None:
+                # 동시에 두 요청이 만들려 해도 부분 유니크 인덱스(is_local)가 하나만 남긴다
+                row = await conn.fetchrow(
+                    """INSERT INTO users (id, email_verified, name, is_local) VALUES ($1, FALSE, $2, TRUE)
+                       ON CONFLICT DO NOTHING RETURNING *""",
+                    str(uuid.uuid4()), LOCAL_NAME,
+                )
+        if row is None:
+            row = await conn.fetchrow("SELECT * FROM users WHERE is_local")
+    return _user_row(row)
 
-    google_sub을 충돌 키로 쓰는 이유: 사용자가 Google 계정의 이메일을 바꿔도
-    같은 계정으로 인식되어 기존 대화 세션을 그대로 유지할 수 있다.
-    이름/사진/이메일은 로그인할 때마다 Google 쪽 최신 값으로 덮어쓴다.
+
+async def link_google(user_id: str, claims: dict[str, Any]) -> dict[str, Any]:
     """
-    pool = get_pool()
+    Google ID 토큰의 claims로 로컬 사용자에 Google 계정을 연결한다 (이름·이메일·사진은 Google 값으로).
+    같은 Google 계정이 다른(예전) 사용자 행에 남아 있으면 그쪽 연결을 풀어 유니크 충돌을 피한다.
+    """
     google_sub = claims["sub"]
     email = claims["email"]
     name = (claims.get("name") or email.split("@")[0]).strip()
-    picture = claims.get("picture")
-    email_verified = bool(claims.get("email_verified", False))
+    async with get_pool().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("UPDATE users SET google_sub = NULL WHERE google_sub = $1 AND id <> $2", google_sub, user_id)
+            row = await conn.fetchrow(
+                """UPDATE users
+                      SET google_sub = $2, email = $3, email_verified = $4, name = $5, picture = $6,
+                          updated_at = now(), last_login_at = now()
+                    WHERE id = $1
+                RETURNING *""",
+                user_id, google_sub, email, bool(claims.get("email_verified", False)), name, claims.get("picture"),
+            )
+    return _user_row(row)
 
-    async with pool.acquire() as conn:
+
+async def unlink_google(user_id: str) -> dict[str, Any]:
+    """Google 계정 연결을 푼다. 대화·설정 등 데이터는 그대로 남는다."""
+    async with get_pool().acquire() as conn:
         row = await conn.fetchrow(
-            """
-            INSERT INTO users (id, google_sub, email, email_verified, name, picture, last_login_at)
-            VALUES ($1, $2, $3, $4, $5, $6, now())
-            ON CONFLICT (google_sub) DO UPDATE
-               SET email          = EXCLUDED.email,
-                   email_verified = EXCLUDED.email_verified,
-                   name           = EXCLUDED.name,
-                   picture        = EXCLUDED.picture,
-                   updated_at     = now(),
-                   last_login_at  = now()
-            RETURNING *
-            """,
-            str(uuid.uuid4()), google_sub, email, email_verified, name, picture,
+            """UPDATE users
+                  SET google_sub = NULL, email = NULL, email_verified = FALSE, name = $2, picture = NULL,
+                      updated_at = now()
+                WHERE id = $1
+            RETURNING *""",
+            user_id, LOCAL_NAME,
         )
     return _user_row(row)
 
 
 async def get_user(user_id: str) -> Optional[dict[str, Any]]:
-    pool = get_pool()
-    async with pool.acquire() as conn:
+    async with get_pool().acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM users WHERE id = $1", user_id)
     return _user_row(row) if row else None
-
-
-async def delete_user(user_id: str) -> bool:
-    """회원 탈퇴. chat_sessions/chat_messages는 FK CASCADE로 함께 삭제된다."""
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        result = await conn.execute("DELETE FROM users WHERE id = $1", user_id)
-    return result.endswith(" 1")

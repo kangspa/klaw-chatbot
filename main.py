@@ -37,6 +37,7 @@ from api.chatbot.functions.agent import build_chatbot_agent
 from api.chatbot.functions.law_auth import preflight_law_auth
 from api.chatbot.functions.summary import ensure_conversation_history_collection
 from api import runtime_control
+from api.auth.user_store import ensure_local_user
 
 # .env 파일에서 환경 변수 로드
 dotenv.load_dotenv()
@@ -51,6 +52,11 @@ async def lifespan(app: FastAPI):
     #  - Qdrant   : AI가 과거 대화를 의미 검색하기 위한 벡터 (1턴 = 1 point)
     #  - MemorySaver : LangGraph 실행 상태 (같은 thread_id 내 multi-turn 유지, 서버 재시작 시 휘발)
     pool = await init_pool()
+    # 로그인 없이 쓰는 개인 PC용 서비스 — 로컬 사용자를 미리 만들어 둔다 (Google 계정 연결은 선택, api/auth/user_store.py)
+    if pool is not None:
+        local_user = await ensure_local_user()
+        print(f"[auth] 로컬 사용자: {local_user['name']}"
+              + (f" (Google 연결: {local_user['email']})" if local_user["googleLinked"] else " (Google 미연결)"))
     # LLM 모델 목록: 테이블이 비어 있을 때만 seed JSON으로 채우고, 레지스트리를 미리 읽어둔다
     if pool is not None:
         try:

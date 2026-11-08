@@ -169,6 +169,7 @@ a:hover { text-decoration: underline; }
   font-size: 14px;
 }
 .app-booting__logo { font-size: 40px; }
+.app-booting__detail { font-size: 13px; color: var(--muted); max-width: 520px; text-align: center; }
 
 /* ============================================================
    앱 셸 (사이드바 + 메인)
@@ -722,6 +723,12 @@ a:hover { text-decoration: underline; }
 .account__name { font-weight: 700; font-size: 16px; }
 .account__email { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
 .account__meta { color: var(--faint); font-size: 12px; margin-top: 2px; }
+.google-link { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.google-link__head { display: flex; align-items: center; gap: 8px; }
+.google-link__title { font-weight: 700; font-size: 14px; }
+.google-link__desc { font-size: 13px; color: var(--muted); margin: 4px 0 10px; }
+.google-link__linked { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 14px; }
+.google-link .gsi { align-items: flex-start; }
 
 .model-group + .model-group { margin-top: 18px; }
 .model-group__title { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: 0.3px; margin-bottom: 6px; }

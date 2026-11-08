@@ -9,7 +9,7 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ onNavigate }: SidebarProps) {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
   const { sessions, error, createNew, remove, rename } = useSessions()
   const navigate = useNavigate()
   const location = useLocation()
@@ -113,9 +113,12 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           ) : (
             <span className="sidebar__avatar" aria-hidden>{user?.name?.[0]?.toUpperCase() ?? '?'}</span>
           )}
-          <span className="sidebar__username" title={user?.email}>{user?.name}</span>
+          <span className="sidebar__username" title={user?.email ?? undefined}>{user?.name}</span>
         </div>
-        <button className="btn btn--text" onClick={logout} title="로그아웃">로그아웃</button>
+        <NavLink to="/settings" className="btn btn--text" onClick={onNavigate}
+                 title={user?.googleLinked ? `Google 연결됨 (${user.email})` : 'Google 계정 연결 (선택)'}>
+          {user?.googleLinked ? 'Google 연결됨' : 'Google 연결'}
+        </NavLink>
       </div>
     </aside>
   )

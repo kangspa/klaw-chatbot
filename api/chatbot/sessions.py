@@ -57,7 +57,7 @@ class RenameSessionRequest(BaseModel):
 
 @router.get("")
 async def list_sessions(current_user: dict[str, Any] = Depends(get_current_user)):
-    """로그인한 회원의 세션 목록 (메시지 포함, 최근 활동순)."""
+    """로컬 사용자의 세션 목록 (메시지 포함, 최근 활동순)."""
     return {"sessions": await session_store.list_sessions_with_messages(current_user["id"])}
 
 

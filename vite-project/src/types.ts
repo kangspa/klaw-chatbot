@@ -1,14 +1,18 @@
 // 앱 전역에서 쓰는 공통 타입 정의
 
-/** Google 계정 연동으로 만들어지는 회원. id는 서버가 발급한 내부 UUID다. */
+/**
+ * 이 PC의 로컬 사용자 (로그인 없이 하나). Google 계정을 연결하면 이름·이메일·사진이 Google 값으로 채워진다.
+ * id는 서버가 발급한 내부 UUID다.
+ */
 export interface User {
   id: string                  // 내부 사용자 UUID (세션의 owner_id)
-  email: string
+  email: string | null        // Google 연결 시에만
   emailVerified?: boolean
-  name: string                // 표시 이름 (Google 프로필 이름)
+  name: string                // 표시 이름 (연결 전 '로컬 사용자', 연결 후 Google 프로필 이름)
   picture?: string | null     // Google 프로필 사진 URL
   createdAt?: string
   lastLoginAt?: string | null
+  googleLinked: boolean       // Google 계정 연결 여부 (선택 사항)
 }
 
 export type ChatRole = 'user' | 'assistant'

@@ -33,7 +33,7 @@ interface GoogleSignInButtonProps {
 }
 
 /**
- * Google 계정 로그인 버튼.
+ * Google 계정 연결 버튼 (선택 사항 — 마이 페이지).
  *
  * 클라이언트 ID는 백엔드(/auth/config)에서 받아온다. 프론트 빌드에 값을 심지 않아도 되고,
  * 서버와 프론트가 서로 다른 클라이언트 ID를 보는 상황도 생기지 않는다.
@@ -59,7 +59,7 @@ export default function GoogleSignInButton({ onCredential, busy }: GoogleSignInB
       if (!alive) return
       if (!clientId) {
         throw new Error(
-          '서버에 Google 로그인이 설정되지 않았습니다. .env의 GOOGLE_CLIENT_ID를 지정한 뒤 서버를 재시작하세요.',
+          'Google 계정 연결이 설정되지 않았습니다. .env의 GOOGLE_CLIENT_ID를 지정한 뒤 서버를 재시작하세요.',
         )
       }
 
@@ -79,7 +79,7 @@ export default function GoogleSignInButton({ onCredential, busy }: GoogleSignInB
         type: 'standard',
         theme: 'outline',
         size: 'large',
-        text: 'continue_with',
+        text: 'signin_with',
         shape: 'pill',
         logo_alignment: 'left',
         width: 320,
@@ -103,7 +103,7 @@ export default function GoogleSignInButton({ onCredential, busy }: GoogleSignInB
       {status === 'error' && <p className="auth__error">{message}</p>}
       {/* GIS가 이 요소 안에 버튼을 그린다. 로그인 처리 중에는 중복 클릭을 막기 위해 가린다. */}
       <div ref={holderRef} className="gsi__button" hidden={status !== 'ready' || busy} />
-      {busy && <p className="gsi__hint">로그인 중…</p>}
+      {busy && <p className="gsi__hint">연결 중…</p>}
     </div>
   )
 }
