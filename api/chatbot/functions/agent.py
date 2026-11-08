@@ -6,7 +6,7 @@ from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, Tool
 from langchain_core.runnables import RunnableConfig
 from datetime import datetime
 
-from api.load_variable import AgentState, LAW_TOOLS
+from api.load_variable import AgentState, LAW_TOOLS, LAW_MCP_INSTRUCTIONS
 from langgraph.prebuilt import ToolNode, tools_condition
 from api.chatbot.functions.tools import web_search, page_crawl4ai, search_entity, search_history, search_memory
 from api.chatbot.functions.summary import memory_manager_graph
@@ -170,6 +170,19 @@ def build_mcp_tool_catalog(mcp_tools, max_desc: int = 220) -> str:
             desc = desc[:max_desc] + "…"
         lines.append(f"- {t.name}: {desc}" if desc else f"- {t.name}")
     return "\n".join(lines)
+
+
+def build_mcp_usage_guide() -> str:
+    """
+    korean-law-mcp 서버 안내문(도구 사용 순서) 블록. 안내문을 못 받았으면 빈 문자열.
+
+    서버는 v4.15.12부터 도구 사이 안내(search_law로 ID를 얻은 뒤 get_law_text,
+    discover_tools로 찾은 뒤 execute_tool 등)를 도구 설명이 아닌 이 안내문으로만 보낸다.
+    빠뜨리면 모델이 식별자 없이 본문 조회를 부르거나 숨은 전문 도구를 찾지 못한다.
+    """
+    if not LAW_MCP_INSTRUCTIONS:
+        return ""
+    return f"\n[korean-law-mcp 도구 사용 순서 (서버 안내)]\n{LAW_MCP_INSTRUCTIONS}\n"
 
 
 # ==========================================
@@ -758,6 +771,8 @@ async def law_search_agent(state: AgentState, config: RunnableConfig):
 2. 현재까지 진행된 법률 검색 횟수: {current_search_count + 1} / 5회 (최대 5회 시도 가능)
 3. 사용자에게 최종 설명을 작성하지 말고, 필수 법률 정보 수집을 위한 **LAW_TOOLS 도구 호출(Tool Call)**을 반드시 생성하세요.
 4. 질문에 대한 법률 정보가 충분히 수집되어 더 이상 추가 검색이 필요 없는 경우에만, 도구 호출 없이 "[법률 정보 검색 완료]" 텍스트로만 응답하세요.
+5. lawId·mst 같은 식별자는 **이전 도구 결과에 나온 값만** 쓰세요. 빈 값이나 추측한 값으로 get_law_text 등을 호출하지 마세요.
+   식별자를 얻는 호출(search_law)과 그 식별자가 필요한 호출은 같은 응답에 함께 넣지 말고, 결과를 받은 뒤 다음 단계에서 호출하세요.
 
 [검색 실패 시 대응 — 매우 중요]
 - 도구가 '결과 없음(NOT_FOUND)'이나 오류를 돌려주는 것은 **정상적인 상황**입니다. 포기하지 말고 **검색어를 바꿔 반드시 재시도**하세요.
@@ -773,7 +788,7 @@ async def law_search_agent(state: AgentState, config: RunnableConfig):
 
 [이번에 시도할 단계]
 {next_step}
-
+{build_mcp_usage_guide()}
 [korean-law-mcp 법률 도구 목록]
 {build_mcp_tool_catalog(available_law_tools)}
 """

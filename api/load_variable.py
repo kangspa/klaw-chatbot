@@ -60,6 +60,19 @@ MCP_CLIENT = MultiServerMCPClient({
     }
 })
 
+async def _load_law_mcp_instructions() -> str:
+    """
+    서버가 initialize 응답에 담아 보내는 사용 안내(instructions)를 읽는다.
+
+    korean-law-mcp v4.15.12부터 '도구 A로 ID를 얻은 뒤 도구 B' 같은 도구 사이 안내가
+    도구 설명에서 빠지고 이 안내문으로만 나간다(Claude 커넥터 디렉터리 정책).
+    MultiServerMCPClient는 initialize 결과를 버리므로 직접 받아 프롬프트에 넣어야 모델이 본다.
+    """
+    async with MCP_CLIENT.session("korean_law", auto_initialize=False) as session:
+        result = await session.initialize()
+    return (result.instructions or "").strip()
+
+
 try:
     # 모듈 임포트 시 1회 블로킹 로드 (~1-2초)
     # 이후 모든 요청에서 동일한 LAW_TOOLS 인스턴스를 재사용
@@ -76,6 +89,15 @@ except Exception as _mcp_err:
     print(f"[MCP] Korean Law 도구 로드 실패: {_mcp_err}")
     print("[MCP] docker가 실행 중인지, http://localhost:3000/health 가 응답하는지 확인하세요.")
     LAW_TOOLS = []
+
+# 안내문은 없어도 검색은 동작하므로, 실패해도 도구 로드와 별개로 빈 값으로 둔다.
+LAW_MCP_INSTRUCTIONS = ""
+if LAW_TOOLS:
+    try:
+        LAW_MCP_INSTRUCTIONS = asyncio.run(_load_law_mcp_instructions())
+        print(f"[MCP] Korean Law 서버 안내문 로드: {len(LAW_MCP_INSTRUCTIONS)}자")
+    except Exception as _inst_err:
+        print(f"[MCP] Korean Law 서버 안내문 로드 실패 (도구 설명만 사용): {_inst_err}")
 
 # 에이전트 상태 정의
 from langchain_core.messages import BaseMessage
