@@ -25,10 +25,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from api.env_store import read_env_file, write_env_values
 from api.llm_gateway import local_runtime as lr
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-ENV_FILE = PROJECT_ROOT / ".env"
 
 # docker-compose.yml·Dockerfile의 기본값과 같아야 한다 (.env에 값이 없을 때 쓰이는 버전)
 DEFAULT_VERSION = "0.34.4"
@@ -47,30 +47,11 @@ def configured_version() -> str:
 
 
 def _read_env_file() -> dict[str, str]:
-    values: dict[str, str] = {}
-    if ENV_FILE.exists():
-        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
-            m = re.match(r"^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$", line)
-            if m:
-                values[m.group(1)] = m.group(2).strip('"').strip("'")
-    return values
+    return read_env_file()
 
 
 def _write_env_values(updates: dict[str, str]) -> None:
-    """루트 .env의 해당 키만 바꾸고(없으면 끝에 추가) 나머지 줄은 그대로 둔다."""
-    lines = ENV_FILE.read_text(encoding="utf-8").splitlines() if ENV_FILE.exists() else []
-    pending = dict(updates)
-    for i, line in enumerate(lines):
-        m = re.match(r"^\s*([A-Z0-9_]+)\s*=", line)
-        if m and m.group(1) in pending:
-            lines[i] = f"{m.group(1)}={pending.pop(m.group(1))}"
-    if pending:
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines.append("# 로컬 모델 서버(Ollama) 버전 — 마이 페이지에서 변경 (docker-compose.yml이 빌드 인자로 사용)")
-        lines.extend(f"{k}={v}" for k, v in pending.items())
-    ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.environ.update(updates)
+    write_env_values(updates, comment="로컬 모델 서버(Ollama) 버전 — 마이 페이지에서 변경 (docker-compose.yml이 빌드 인자로 사용)")
 
 
 # ────────────────────────── GitHub 릴리스 ──────────────────────────

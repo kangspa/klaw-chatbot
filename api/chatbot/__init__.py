@@ -5,6 +5,7 @@ from .sessions import router as sessions_router
 from .dashboard import router as dashboard_router
 from .models import router as models_router
 from .runtime import router as runtime_router
+from .keys import router as keys_router
 
 # 통합 라우터 생성 및 프리픽스 부여
 chatbot_router = APIRouter(prefix="/chatbot")
@@ -16,4 +17,5 @@ chatbot_router.include_router(sessions_router)
 chatbot_router.include_router(dashboard_router)
 chatbot_router.include_router(models_router)
 chatbot_router.include_router(runtime_router)
+chatbot_router.include_router(keys_router)
 chatbot_router.include_router(router)

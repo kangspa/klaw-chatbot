@@ -806,6 +806,27 @@ a:hover { text-decoration: underline; }
 .catalog__name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .catalog__meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
+/* API 키 관리 */
+.keys-note { font-size: 13px; color: var(--muted); background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 14px; }
+.keys-note code { font-size: 12px; }
+.key-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.key-row { padding: 14px; }
+.key-row + .key-row { border-top: 1px solid var(--border); }
+.key-row__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.key-row__title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.key-row__label { font-weight: 700; }
+.key-row__env { font-size: 12px; color: var(--faint); }
+.key-row__actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.key-row__desc { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.key-row__masked { display: inline-block; margin-top: 6px; font-size: 13px; background: var(--surface-2); border-radius: 6px; padding: 3px 8px; letter-spacing: 0.3px; }
+.key-row__form { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.key-row__input { flex: 1; min-width: 220px; padding: 7px 10px; font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.key-row__apply { width: 100%; font-size: 12px; color: var(--faint); }
+.key-row__status { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; }
+.key-row__status--done { color: #1e7a3d; }
+.key-row__status--error { color: var(--danger); }
+.key-row__status--running { color: #1d5fb0; }
+
 /* 런타임 버전 (Ollama · LiteLLM) */
 .runtime-banner {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;

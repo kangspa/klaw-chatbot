@@ -223,6 +223,28 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
 | `GET /chatbot/runtime/update` | 진행 단계·로그 |
 | `POST /chatbot/runtime/litellm/check` | `{version}` LiteLLM 버전 호환성 확인 (별도 가상환경) |
 
+### API 키 관리 (`/keys`)
+
+사이드바 **API 키** 화면에서 OpenAI · Gemini · Anthropic · Hugging Face · Ollama(클라우드) 키와 법제처 `LAW_OC`를
+입력·변경·삭제하고 **연결 확인**을 한다 (`api/chatbot/keys.py`). 개인 PC용 서비스라 키는 이 PC의 루트 `.env`에 저장하고
+(`api/env_store.py` — 해당 줄만 바꾸고 나머지는 그대로 둔다), 응답에는 원문 대신 앞뒤 4글자만 담는다.
+
+| 키 | 저장 후 적용 |
+| --- | --- |
+| OpenAI · Gemini · Anthropic | 바로 (LiteLLM이 호출마다 환경 변수를 읽는다) |
+| Hugging Face · Ollama | 모델 인스턴스 캐시를 비워 새 키로 다시 만든다 |
+| `LAW_OC` | korean-law-mcp 컨테이너를 다시 만들고 '민법' 검색으로 인증 확인. docker-compose 필수 값이라 삭제는 막는다 |
+
+연결 확인은 토큰을 쓰지 않는 요청만 보낸다 (모델 목록·계정 조회: OpenAI `/v1/models`, Gemini `models`, Anthropic `/v1/models`,
+HF `whoami-v2`, ollama.com `POST /api/me`, LAW_OC는 법령 검색).
+
+| API | 용도 |
+| --- | --- |
+| `GET /chatbot/keys` | 키 목록 (설정 여부·가린 값·적용 방식, LAW_OC 적용 진행 상태) |
+| `PUT /chatbot/keys` | `{id, value}` 저장·변경 |
+| `POST /chatbot/keys/delete` | `{id}` 삭제 (LAW_OC 불가) |
+| `POST /chatbot/keys/test` | `{id}` 연결 확인 |
+
 초기 데이터는 `api/llm_gateway/seed_models.json`이다. 테이블이 비어 있으면 서버 시작 시 자동으로 채워지고,
 이후 JSON을 고쳤다면 아래 스크립트로 반영한다.
 
