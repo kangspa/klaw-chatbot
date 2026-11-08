@@ -28,7 +28,7 @@ from typing import Optional
 from api.env_store import read_env_file, write_env_values
 from api.llm_gateway import local_runtime as lr
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from api.stack import HOME as STACK_HOME, compose_cmd
 
 # docker-compose.yml·Dockerfile의 기본값과 같아야 한다 (.env에 값이 없을 때 쓰이는 버전)
 DEFAULT_VERSION = "0.34.4"
@@ -202,10 +202,10 @@ class OllamaUpgrader:
 
     # ── 도우미 ──
     def _compose(self, job: UpgradeJob, args: list[str], env_over: dict[str, str], timeout: int) -> None:
-        cmd = ["docker", "compose", *args]
+        cmd = compose_cmd(*args)
         self._log(job, "$ " + " ".join(cmd))
         proc = subprocess.Popen(
-            cmd, cwd=PROJECT_ROOT, env={**os.environ, **env_over},
+            cmd, cwd=STACK_HOME, env={**os.environ, **env_over},
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
         )
         deadline = time.time() + timeout

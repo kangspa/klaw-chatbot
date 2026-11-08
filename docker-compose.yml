@@ -1,11 +1,15 @@
+# KLaw 서비스 스택. 개발(저장소)과 패키징된 exe가 같은 파일을 쓴다 (api/stack.py).
+#  - 컨테이너 이름을 고정하지 않는다 → 프로젝트 이름(개발 klaw-chatbot / exe klaw)으로 구분되어 같은 PC에서도 겹치지 않는다
+#  - 호스트 포트는 .env의 KLAW_PORT_*로 정한다 (없으면 기본값). exe는 기본 포트가 사용 중이면 빈 포트를 골라 기억한다
+#  - 127.0.0.1에만 연다 → 이 PC 밖에서는 접근할 수 없다
+#  - restart: unless-stopped → exe를 종료하며 멈춘 컨테이너가 PC를 다시 켰을 때 저절로 뜨지 않는다
 services:
   searxng: # 서비스의 논리적 이름을 정의합니다.
-    container_name: searxng # 도커 엔진에서 이 컨테이너를 식별하는 고정 이름을 설정합니다.
     # 버전 고정 (태그는 표시용, 실제로는 digest로 받는다). latest를 쓰면 pull만 해도 엔진 구성이 바뀌어
     # 검색이 깨질 수 있다 (2026.8→2026.9에서 기본 엔진이 교체됨). 올릴 때는 config/settings.yml과 함께 점검.
     image: searxng/searxng:2026.9.25-12f8b6515@sha256:5286edb35782454ab8a102c5eff6b54bff745853191b46aeead95f225aa6dfb6
     ports:
-      - "8888:8080" # 내 PC의 8888 포트를 컨테이너 안의 8080(기본 포트)과 연결합니다.
+      - "127.0.0.1:${KLAW_PORT_SEARXNG:-8888}:8080" # 내 PC의 포트(기본 8888)를 컨테이너 안의 8080과 연결합니다.
     volumes:
       - ./config/:/etc/searxng:rw # 내 PC의 config 폴더를 컨테이너 내부 설정 경로에 동기화(읽기/쓰기 권한)합니다.
     environment:
@@ -25,26 +29,24 @@ services:
       options:
         max-size: "1m" # 로그 파일 하나의 크기를 최대 1MB로 제한합니다. (용량 폭주 방지)
         max-file: "1"  # 로그 파일은 최신본 1개만 유지합니다. (디스크 공간 절약)
-    restart: always
+    restart: unless-stopped
 
   qdrant:
     # 버전 고정 (태그는 표시용, 실제로는 digest로 받는다). 올릴 때는 기존 저장 데이터 호환성을 먼저 확인할 것.
     image: qdrant/qdrant:v1.19.0@sha256:057ee3a8da769fe7310dd3537b4dc7583bf87a95ce8ac43c0af5a46bc580d1fc
-    container_name: qdrant
     ports:
-      - "6333:6333" # REST API (기본 접속용)
-      - "6334:6334" # gRPC (성능 위주 통신용)
+      - "127.0.0.1:${KLAW_PORT_QDRANT:-6333}:6333"      # REST API (기본 접속용)
+      - "127.0.0.1:${KLAW_PORT_QDRANT_GRPC:-6334}:6334" # gRPC (성능 위주 통신용)
     volumes:
       - ./qdrant_data:/qdrant/storage # 데이터 영구 저장을 위해 필수!
-    restart: always
+    restart: unless-stopped
 
   postgres:
     # LangGraph checkpointer + PostgresStore + 마스터 테이블용
     # 버전 고정 (태그는 표시용, 실제로는 digest로 받는다)
     image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
-    container_name: postgres
     ports:
-      - "5432:5432"  # 호스트 5432 ↔ 컨테이너 5432
+      - "127.0.0.1:${KLAW_PORT_POSTGRES:-5432}:5432"  # 호스트(기본 5432) ↔ 컨테이너 5432
     environment:
       # .env의 DB_USER / DB_PASSWORD / DB_NAME 와 동일하게 유지
       POSTGRES_USER: ${DB_USER:-raglaw}
@@ -57,7 +59,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: always
+    restart: unless-stopped
 
   korean-law-mcp:
     # build 지시: 이 디렉토리의 Dockerfile을 사용해 로컬에서 이미지를 빌드합니다.
@@ -66,9 +68,8 @@ services:
       context: ./korean-law-mcp
       dockerfile: Dockerfile
     image: korean-law-mcp:local   # 빌드된 이미지에 붙일 태그
-    container_name: korean-law-mcp
     ports:
-      - "3000:3000"               # 호스트(PC) 3000 ↔ 컨테이너 3000 — Python 앱은 http://localhost:3000으로 접근
+      - "127.0.0.1:${KLAW_PORT_LAW_MCP:-3000}:3000"  # 호스트(기본 3000) ↔ 컨테이너 3000
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -77,7 +78,8 @@ services:
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?루트 .env에 MCP_AUTH_TOKEN을 설정하세요}
       # 법제처 Open API 인증값(OC). 서브모듈 폴더(korean-law-mcp/.env)에 두면 서브모듈을 다시 받을 때
       # 함께 사라지기 쉬워 루트 .env에서 관리한다.
-      - LAW_OC=${LAW_OC:?루트 .env에 LAW_OC(법제처 Open API 인증값)를 설정하세요}
+      # 비어 있어도 서버는 뜬다 (법령 검색만 실패) — 화면의 API 키 관리에서 넣으면 이 컨테이너를 다시 만든다
+      - LAW_OC=${LAW_OC:-}
       # 필요 시 보안/리미트 옵션 (자세한 항목은 korean-law-mcp/CLAUDE.md 참고)
       # - CORS_ORIGIN=http://localhost
       # - RATE_LIMIT_RPM=120
@@ -91,7 +93,7 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
-    restart: always
+    restart: unless-stopped
   ollama:
     # 로컬 LLM 서버. 이미지는 docker/ollama/Dockerfile (Ollama + CUDA/Vulkan/Dozen 드라이버, 버전 고정)
     # 기본은 CPU로 동작한다. GPU 가속은 호스트마다 넘길 장치가 달라서(NVIDIA / Linux /dev/dri / WSL2 /dev/dxg)
@@ -104,9 +106,8 @@ services:
         OLLAMA_VERSION: ${OLLAMA_VERSION:-0.34.4}
         OLLAMA_SHA256: ${OLLAMA_SHA256:-c238986e61d40c0cc5f4a9b9e40b9eea104350b77efa34741fc134e105cb9533}
     image: klaw-ollama:${OLLAMA_VERSION:-0.34.4}
-    container_name: ollama
     ports:
-      - "11434:11434"             # 앱은 OLLAMA_BASE_URL(기본 http://localhost:11434)로 접근
+      - "127.0.0.1:${KLAW_PORT_OLLAMA:-11434}:11434"  # 호스트(기본 11434) ↔ 컨테이너 11434
     volumes:
       # 받은 모델 영구 저장 (수 GB). Windows 폴더 바인드 마운트(./ollama_data)는 쓰지 않는다 —
       # Docker Desktop(WSL2)에서 GPU 버퍼로 모델을 읽을 때 "read error: Bad address"로 로드가 실패하고,
@@ -115,7 +116,7 @@ services:
     environment:
       - OLLAMA_KEEP_ALIVE=10m     # 마지막 요청 후 모델을 메모리에 유지하는 시간
       - OLLAMA_NO_CLOUD=1         # 클라우드 모델(…-cloud)·ollama.com 연동을 끈다 — 이 PC에서 도는 로컬 모델만 쓴다
-    restart: always
+    restart: unless-stopped
 
 volumes:
-  ollama_models:   # 로컬 LLM 모델 저장소 (docker volume rm klaw-chatbot_ollama_models 로 삭제)
+  ollama_models:   # 로컬 LLM 모델 저장소 (docker volume rm <프로젝트>_ollama_models 로 삭제)

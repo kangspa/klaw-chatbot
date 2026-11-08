@@ -10,7 +10,9 @@ import re
 import threading
 from pathlib import Path
 
-ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+from api.stack import HOME as _STACK_HOME
+
+ENV_FILE = _STACK_HOME / ".env"   # 개발: 저장소 루트 / exe: %LOCALAPPDATA%\KLaw
 _LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
 _lock = threading.Lock()
 

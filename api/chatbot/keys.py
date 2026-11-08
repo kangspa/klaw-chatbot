@@ -26,9 +26,9 @@ from pydantic import BaseModel, Field
 
 from api.auth.deps import get_current_user
 from api.env_store import read_env_file, remove_env_keys, rename_env_key, write_env_values
+from api.stack import HOME as STACK_HOME, compose_cmd
 
 router = APIRouter(prefix="/keys", dependencies=[Depends(get_current_user)])
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 @dataclass(frozen=True)
@@ -114,8 +114,8 @@ def _restart_law_mcp() -> None:
     async def run() -> None:
         try:
             out = await asyncio.to_thread(
-                subprocess.run, ["docker", "compose", "up", "-d", "--force-recreate", "korean-law-mcp"],
-                cwd=PROJECT_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
+                subprocess.run, compose_cmd("up", "-d", "--force-recreate", "korean-law-mcp"),
+                cwd=STACK_HOME, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
                 env={**os.environ},
             )
             if out.returncode != 0:
@@ -124,7 +124,7 @@ def _restart_law_mcp() -> None:
             async with httpx.AsyncClient(timeout=3) as client:
                 for _ in range(40):
                     try:
-                        if (await client.get("http://localhost:3000/health")).status_code == 200:
+                        if (await client.get(os.getenv("LAW_MCP_HEALTH_URL", "http://127.0.0.1:3000/health"))).status_code == 200:
                             break
                     except Exception:
                         pass

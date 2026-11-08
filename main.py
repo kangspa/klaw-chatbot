@@ -22,13 +22,13 @@ for _stream in (sys.stdout, sys.stderr):
 
 import dotenv, os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
 from langgraph.checkpoint.memory import MemorySaver
-from api import api_router
+from api.routes import api_router
 from api.db import close_pool, init_pool
 from api.llm_gateway.local_runtime import report_local_runtime
 from api.llm_gateway.store import seed_if_empty as seed_llm_models_if_empty
@@ -36,11 +36,11 @@ from api.load_variable import MODEL_REGISTRY
 from api.chatbot.functions.agent import build_chatbot_agent
 from api.chatbot.functions.law_auth import preflight_law_auth
 from api.chatbot.functions.summary import ensure_conversation_history_collection
-from api import runtime_control
+from api import runtime_control, stack
 from api.auth.user_store import ensure_local_user
 
 # .env 파일에서 환경 변수 로드
-dotenv.load_dotenv()
+dotenv.load_dotenv(stack.HOME / ".env")   # 스택 위치의 .env (개발: 저장소 / exe: %LOCALAPPDATA%/KLaw)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -111,9 +111,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-async def read_index():
-    return FileResponse('templates/index.html')
+# --- 웹 UI (프론트 빌드) ---
+# exe·운영에서는 Vite 개발 서버 없이 이 서버가 빌드된 화면을 같은 주소·포트로 내준다 (API와 같은 출처라 프록시·CORS 불필요).
+# 개발 중에는 vite-project/dist가 없으면 예전처럼 templates/index.html을 쓴다 (Vite 개발 서버는 5173에서 따로 뜬다).
+FRONTEND_DIST = stack.BUNDLE / ("frontend" if stack.FROZEN else "vite-project/dist")
+_API_PREFIXES = ("auth/", "chatbot/", "docs", "redoc", "openapi.json", "templates/", "data/", "static/")
+
+if (FRONTEND_DIST / "index.html").exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="frontend-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def frontend(full_path: str):
+        """화면 경로(/dashboard, /chat/…, /settings 등)는 index.html — 라우팅은 React가 한다."""
+        if full_path.startswith(_API_PREFIXES):
+            raise HTTPException(status_code=404)
+        target = (FRONTEND_DIST / full_path).resolve()
+        if full_path and target.is_file() and FRONTEND_DIST.resolve() in target.parents:
+            return FileResponse(target)   # favicon.svg 등 dist 루트 파일
+        return FileResponse(FRONTEND_DIST / "index.html")
+else:
+    @app.get("/")
+    async def read_index():
+        return FileResponse('templates/index.html')
 
 if __name__ == "__main__":
     # uvicorn.run() 우회 이유:
@@ -122,10 +141,11 @@ if __name__ == "__main__":
     #   loop="asyncio" 옵션도 동일 factory를 거쳐 무력화됨.
     #   → uvicorn.Config + Server.serve()를 직접 asyncio.run()에 넘겨,
     #     모듈 최상단의 WindowsSelectorEventLoopPolicy가 살아있는 루프를 보장한다.
+    # 개인 PC용이라 기본은 이 PC에서만 접속(127.0.0.1). 포트는 .env의 KLAW_PORT_WEB (기본 8008)
     config = uvicorn.Config(
         "main:app",
-        host="0.0.0.0",
-        port=8008,
+        host=os.getenv("KLAW_HOST", "127.0.0.1"),
+        port=stack.port(stack.WEB_PORT_ENV),
         reload=False,
     )
     server = uvicorn.Server(config)

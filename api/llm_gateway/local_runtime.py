@@ -26,11 +26,13 @@ _GPU_LIBRARIES = {"CUDA": "NVIDIA CUDA", "ROCm": "AMD ROCm", "Vulkan": "Vulkan",
 
 
 def ollama_base_url() -> str:
-    return os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+    return os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 
 
 def ollama_container() -> str:
-    return os.getenv("OLLAMA_CONTAINER", "ollama")
+    """Ollama 컨테이너 ID (컨테이너 이름을 고정하지 않으므로 compose 라벨로 찾는다). 없으면 서비스 이름."""
+    from api.stack import service_container
+    return os.getenv("OLLAMA_CONTAINER") or service_container("ollama") or "ollama"
 
 
 def _get_json(url: str, timeout: float = 3.0) -> Optional[dict]:

@@ -22,8 +22,7 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RUNTIME_DIR = PROJECT_ROOT / ".runtime"
+from api.stack import REPO_ROOT as PROJECT_ROOT, RUNTIME_DIR
 COMPAT_CACHE = RUNTIME_DIR / "litellm_compat.json"
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 PYPI_URL = "https://pypi.org/pypi/litellm/json"

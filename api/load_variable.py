@@ -13,7 +13,7 @@ from api.llm_gateway import LiteLLMEmbeddings, ModelManager, ModelRegistry
 # 현재 단계 목표: 엔드포인트 + LLM + MCP 도구 연결 확인 (상태는 in-memory만).
 # 체크포인터는 main.py의 lifespan에서 MemorySaver()로 직접 생성한다.
 
-SEARX_WRAPPER = SearxSearchWrapper(searx_host="http://localhost:8888")
+SEARX_WRAPPER = SearxSearchWrapper(searx_host=os.getenv("SEARXNG_URL", "http://127.0.0.1:8888"))
 
 
 # 임베딩 모델은 의도적으로 코드에 고정한다 (환경변수로 바꾸지 않는다).
@@ -29,7 +29,8 @@ SEARX_WRAPPER = SearxSearchWrapper(searx_host="http://localhost:8888")
 EMBEDDING_MODEL = "gemini/gemini-embedding-001"   # 3072차원 (LiteLLM 표기)
 GEMINI_EMBEDDINGS = LiteLLMEmbeddings(model=EMBEDDING_MODEL)
 
-QDRANT_DB = AsyncQdrantClient(host="localhost", grpc_port=6334, prefer_grpc=True)
+QDRANT_DB = AsyncQdrantClient(host=os.getenv("QDRANT_HOST", "127.0.0.1"), port=int(os.getenv("QDRANT_PORT", "6333")),
+                              grpc_port=int(os.getenv("QDRANT_GRPC_PORT", "6334")), prefer_grpc=True)
 
 
 # 채팅 모델은 api/llm_gateway가 '접두사/모델명'(예: 'anthropic/claude-sonnet-5')으로 생성한다.
@@ -53,7 +54,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 MCP_CLIENT = MultiServerMCPClient({
     "korean_law": {
         # 환경변수로 오버라이드 가능 (예: 다른 호스트/포트로 띄울 때)
-        "url": os.getenv("MCP_KOREAN_LAW_URL", "http://localhost:3000/mcp"),
+        "url": os.getenv("MCP_KOREAN_LAW_URL", "http://127.0.0.1:3000/mcp"),
         "transport": "streamable_http",
         # 서버(v4.x)는 외부 바인드 시 토큰 인증을 요구한다 (docker-compose가 같은 값을 컨테이너에 주입)
         "headers": {"Authorization": f"Bearer {os.getenv('MCP_AUTH_TOKEN', '')}"},
