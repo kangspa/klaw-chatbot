@@ -6,8 +6,11 @@ API 키 관리 End-point (/chatbot/keys/...) — 사용자가 화면에서 키�
 
 키마다 다시 읽히는 시점이 달라서 저장 뒤 처리가 다르다:
   OpenAI·Gemini·Anthropic  LiteLLM이 호출할 때마다 환경 변수를 읽는다 → 바로 적용
-  Ollama·Hugging Face      모델 인스턴스를 만들 때 키를 넘긴다(캐시) → 모델 캐시를 비운다
+  Hugging Face (HF_TOKEN)  모델 '다운로드' 인증용 (huggingface_hub — 예: OCR 모델). 받을 때마다 읽는다 → 바로 적용.
+                           모델 호출에는 쓰지 않는다 (HF 클라우드 추론은 지원하지 않음)
   LAW_OC                   korean-law-mcp 컨테이너가 시작할 때 읽는다 → 컨테이너를 다시 만들고 인증을 확인한다
+Ollama는 로컬 모델만 쓰므로 키가 없다. 대신 Ollama가 Hugging Face의 승인·비공개 저장소(hf.co/…)를 받을 때 쓰는
+컨테이너 SSH 공개키를 보여준다 (HF 계정 > SSH keys에 등록 — HF_TOKEN으로는 인증되지 않는다).
 """
 import asyncio
 import os
@@ -22,7 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from api.auth.deps import get_current_user
-from api.env_store import read_env_file, remove_env_keys, write_env_values
+from api.env_store import read_env_file, remove_env_keys, rename_env_key, write_env_values
 
 router = APIRouter(prefix="/keys", dependencies=[Depends(get_current_user)])
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -35,7 +38,7 @@ class KeySpec:
     env: str                       # 저장할 .env 변수
     aliases: tuple[str, ...]       # 같은 키로 인정하는 다른 변수 (예전 이름)
     description: str
-    apply: str                     # immediate | reset_models | restart_law
+    apply: str                     # immediate | restart_law
     deletable: bool = True
 
 
@@ -43,10 +46,10 @@ KEYS: list[KeySpec] = [
     KeySpec("OPENAI", "OpenAI", "OPENAI_API_KEY", (), "OpenAI 모델(GPT) 호출", "immediate"),
     KeySpec("GEMINI", "Google Gemini", "GEMINI_API_KEY", ("GOOGLE_API_KEY",), "Gemini 모델 호출", "immediate"),
     KeySpec("ANTHROPIC", "Anthropic", "ANTHROPIC_API_KEY", (), "Claude 모델 호출", "immediate"),
-    KeySpec("HUGGINGFACE", "Hugging Face", "HUGGINGFACEHUB_API_TOKEN", ("HF_TOKEN",),
-            "Hugging Face Inference Providers 모델 호출", "reset_models"),
-    KeySpec("OLLAMA", "Ollama", "OLLAMA_API_KEY", (), "Ollama 클라우드(ollama.com) 계정 키 — 로컬 Ollama는 키 없이 동작",
-            "reset_models"),
+    # huggingface_hub가 읽는 표준 이름은 HF_TOKEN. 예전 이름(HUGGINGFACEHUB_API_TOKEN 등)이면 저장할 때 HF_TOKEN으로 옮긴다
+    KeySpec("HUGGINGFACE", "Hugging Face", "HF_TOKEN", ("HUGGING_FACE_HUB_TOKEN", "HUGGINGFACEHUB_API_TOKEN"),
+            "모델 다운로드 인증 — 승인(gated)·비공개 저장소에서 받을 때 (예: 법령 별표 OCR 모델). 모델 호출에는 쓰지 않습니다",
+            "immediate"),
     # docker-compose가 LAW_OC 없이는 korean-law-mcp를 띄우지 않으므로(필수 값) 지울 수 없고 바꾸기만 한다
     KeySpec("LAW_OC", "법제처 Open API (LAW_OC)", "LAW_OC", (),
             "법령·판례 검색(korean-law-mcp)의 법제처 인증값. 바꾸면 법령 검색 서버를 다시 시작합니다", "restart_law",
@@ -104,12 +107,6 @@ def _spec(key_id: str) -> KeySpec:
     return spec
 
 
-def _reset_model_cache() -> None:
-    """Ollama·HF 모델 인스턴스는 만들 때 키를 넘기므로, 키가 바뀌면 캐시를 비워 새로 만들게 한다."""
-    from api.load_variable import MODEL_MANAGER
-    MODEL_MANAGER.cache.clear()
-
-
 def _restart_law_mcp() -> None:
     """LAW_OC를 새 값으로 쓰도록 korean-law-mcp 컨테이너를 다시 만든 뒤 법제처 인증을 확인한다 (백그라운드)."""
     _law_apply.update(status="running", message="법령 검색 서버를 다시 시작하는 중", at=time.time())
@@ -155,10 +152,10 @@ async def set_key(data: SetKeyRequest):
     if not value or any(c.isspace() for c in value):
         raise HTTPException(status_code=400, detail="키에 공백이나 줄바꿈을 넣을 수 없습니다.")
     _, var = _current(spec)
-    write_env_values({var or spec.env: value}, comment="API 키 — 화면(API 키 관리)에서 입력")
-    if spec.apply == "reset_models":
-        _reset_model_cache()
-    elif spec.apply == "restart_law":
+    if var and var != spec.env:
+        rename_env_key(var, spec.env)   # 예전 변수 이름 → 표준 이름 (값은 아래에서 새로 쓴다)
+    write_env_values({spec.env: value}, comment="API 키 — 화면(API 키 관리)에서 입력")
+    if spec.apply == "restart_law":
         _restart_law_mcp()
     print(f"[keys] {spec.env} 저장")
     return _item(spec)
@@ -170,8 +167,6 @@ async def delete_key(data: KeyIdRequest):
     if not spec.deletable:
         raise HTTPException(status_code=400, detail=f"{spec.label}는 지울 수 없습니다 (법령 검색 서버 실행에 꼭 필요). 새 값으로 바꾸세요.")
     remove_env_keys([spec.env, *spec.aliases])
-    if spec.apply == "reset_models":
-        _reset_model_cache()
     print(f"[keys] {spec.env} 삭제")
     return _item(spec)
 
@@ -197,7 +192,6 @@ async def test_key(data: KeyIdRequest):
         "ANTHROPIC": ("GET", "https://api.anthropic.com/v1/models?limit=1",
                       {"x-api-key": value, "anthropic-version": "2023-06-01"}),
         "HUGGINGFACE": ("GET", "https://huggingface.co/api/whoami-v2", {"Authorization": f"Bearer {value}"}),
-        "OLLAMA": ("POST", "https://ollama.com/api/me", {"Authorization": f"Bearer {value}"}),
     }
     method, url, headers = requests[spec.id]
     try:
@@ -211,3 +205,23 @@ async def test_key(data: KeyIdRequest):
     if resp.status_code in (400, 401, 403):
         return {"ok": False, "message": f"키가 올바르지 않거나 권한이 없습니다 (HTTP {resp.status_code})"}
     return {"ok": False, "message": f"확인하지 못했습니다 (HTTP {resp.status_code})"}
+
+
+@router.get("/ollama-ssh")
+async def ollama_ssh_key():
+    """
+    Ollama 컨테이너의 SSH 공개키. Hugging Face 계정(Settings > SSH and GPG keys)에 등록하면 Ollama가
+    승인(gated)·비공개 hf.co/… 저장소의 GGUF를 받을 수 있다. 공개키라 보여줘도 안전하다 (개인키는 컨테이너 안에만 있다).
+    """
+    from api.llm_gateway.local_runtime import ollama_container
+    try:
+        out = await asyncio.to_thread(
+            subprocess.run, ["docker", "exec", ollama_container(), "cat", "/root/.ollama/id_ed25519.pub"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        return {"available": False, "publicKey": None, "message": "docker 명령을 실행할 수 없습니다."}
+    key = out.stdout.strip()
+    if out.returncode != 0 or not key.startswith("ssh-"):
+        return {"available": False, "publicKey": None, "message": "Ollama 컨테이너가 실행 중이 아니거나 키가 아직 없습니다."}
+    return {"available": True, "publicKey": key, "message": ""}

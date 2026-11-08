@@ -22,10 +22,8 @@ os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"   # 원격 가격표가 아�
 
 # 우리 접두사 → LiteLLM 접두사 (api/llm_gateway/providers.py와 같게 유지)
 _PREFIX = {"gemini": "gemini", "openai": "openai", "anthropic": "anthropic", "ollama": "ollama_chat",
-           "ollama_chat": "ollama_chat", "lmstudio": "lm_studio", "vllm": "hosted_vllm", "huggingface": "huggingface"}
+           "ollama_chat": "ollama_chat", "lmstudio": "lm_studio", "vllm": "hosted_vllm"}
 _LOCAL = {"ollama", "ollama_chat", "lmstudio", "vllm"}
-# Hugging Face Inference Providers 모델은 LiteLLM 가격표에 원래 없다 (비용 0 집계) — 단가 확인에서 뺀다
-_NO_PRICE = {"huggingface"}
 
 
 def main() -> int:
@@ -80,7 +78,7 @@ def main() -> int:
         # 4) 등록 모델 단가 (로컬 모델은 0원으로 처리하므로 제외)
         for model_id in sys.argv[1:]:
             provider, _, name = model_id.partition("/")
-            if provider in _LOCAL or provider in _NO_PRICE or provider not in _PREFIX:
+            if provider in _LOCAL or provider not in _PREFIX:
                 continue
             try:
                 litellm.cost_per_token(model=f"{_PREFIX[provider]}/{name}", prompt_tokens=1000, completion_tokens=100)

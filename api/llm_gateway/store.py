@@ -6,7 +6,6 @@ llm_models 테이블 입출력과 seed JSON 반영.
 """
 import json
 from pathlib import Path
-from typing import Optional
 
 
 from api.llm_gateway.providers import split_model_id
@@ -18,7 +17,7 @@ SEED_PATH = Path(__file__).with_name("seed_models.json")
 async def load_models(conn) -> list[ModelSpec]:
     """DB의 모든 모델(비활성 포함)을 읽는다."""
     model_rows = await conn.fetch(
-        """SELECT id, label, group_name, sort_order, enabled, is_default, fixed_temperature, options, is_custom, meta
+        """SELECT id, label, group_name, sort_order, enabled, is_default, fixed_temperature, options, is_custom
              FROM llm_models ORDER BY sort_order, id"""
     )
     specs = []
@@ -30,7 +29,6 @@ async def load_models(conn) -> list[ModelSpec]:
             id=r["id"], label=r["label"], group=r["group_name"], sort_order=r["sort_order"],
             enabled=r["enabled"], is_default=r["is_default"], fixed_temperature=r["fixed_temperature"],
             options=options or {}, is_custom=r["is_custom"],
-            meta=(json.loads(r["meta"]) if isinstance(r["meta"], str) else r["meta"]) or {},
         ))
     return specs
 
@@ -104,8 +102,7 @@ async def delete_custom_model(conn, model_id: str) -> bool:
 
 
 # ────────────── API 모델 (마이 페이지 Google·OpenAI·Anthropic 탭) ──────────────
-async def add_api_model(conn, model_id: str, label: str, group: str, created_by: str,
-                        meta: Optional[dict] = None) -> None:
+async def add_api_model(conn, model_id: str, label: str, group: str, created_by: str) -> None:
     """
     카탈로그(설치된 LiteLLM이 아는 모델)에서 고른 API 모델을 추가한다. 같은 그룹의 맨 뒤에 붙는다.
     최신 모델 대부분이 temperature 지정을 거부하므로(Gemini 3+, GPT-5+, Claude 4.7+) 보내지 않는다.
@@ -116,9 +113,9 @@ async def add_api_model(conn, model_id: str, label: str, group: str, created_by:
     )
     await conn.execute(
         """INSERT INTO llm_models (id, label, group_name, sort_order, enabled, is_default,
-                                   fixed_temperature, options, is_custom, created_by, meta)
-           VALUES ($1, $2, $3, $4, TRUE, FALSE, TRUE, '{}'::jsonb, TRUE, $5, $6::jsonb)""",
-        model_id, label, group, sort_order, created_by, json.dumps(meta or {}, ensure_ascii=False),
+                                   fixed_temperature, options, is_custom, created_by)
+           VALUES ($1, $2, $3, $4, TRUE, FALSE, TRUE, '{}'::jsonb, TRUE, $5)""",
+        model_id, label, group, sort_order, created_by,
     )
     await conn.execute("DELETE FROM llm_models_removed WHERE id = $1", model_id)
 

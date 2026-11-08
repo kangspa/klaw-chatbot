@@ -38,9 +38,7 @@ class CheckRequest(BaseModel):
 
 async def _api_model_ids() -> list[str]:
     """LiteLLM 호환성 확인에 쓸 등록 API 모델 (로컬 모델은 단가 계산 대상이 아니다)."""
-    # Hugging Face 모델은 LiteLLM 가격표에 원래 없으므로 확인 대상에서 뺀다
-    return [s.id for s in await MODEL_REGISTRY.list_all()
-            if split_model_id(s.id)[0] not in LOCAL_PROVIDERS and split_model_id(s.id)[0] != "huggingface"]
+    return [s.id for s in await MODEL_REGISTRY.list_all() if split_model_id(s.id)[0] not in LOCAL_PROVIDERS]
 
 
 async def _ollama_status() -> dict:

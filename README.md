@@ -160,7 +160,6 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
 | `ollama/` | `ollama_chat/` | Ollama (도구 호출 지원 chat API) | `OLLAMA_BASE_URL` (`http://localhost:11434`), `OLLAMA_NUM_CTX` (`32768`) |
 | `lmstudio/` | `lm_studio/` | LM Studio | `LMSTUDIO_BASE_URL` (`http://localhost:1234/v1`) |
 | `vllm/` | `hosted_vllm/` | vLLM | `VLLM_BASE_URL` (`http://localhost:8000/v1`), `VLLM_API_KEY` |
-| `huggingface/` | `huggingface/` | HF Inference Providers | `HF_TOKEN` 또는 `HUGGINGFACEHUB_API_TOKEN` |
 
 토큰 단가는 **LiteLLM 가격표**로 계산한다. LiteLLM은 서버 시작 시 최신 가격표를 받아 오고(실패하면 설치된
 버전의 내장 가격표 사용), 캐시 토큰 할인과 장문 입력 구간 단가까지 반영한다. 새 모델·가격 변경을 직접 관리할
@@ -189,11 +188,10 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
   - 기본 제공 모델도 지울 수 있다. 지운 기본 모델은 `llm_models_removed`에 기억해 `sync_llm_models.py`가 되살리지 않으며,
     탭의 **기본 모델 복원**으로 되살린다. 기본 모델(`is_default`)은 지울 수 없다.
   - 회사 API 키(`GEMINI_API_KEY` 등)가 `.env`에 없으면 탭에 경고를 띄운다.
-- **Hugging Face 탭**: 커스텀 모델처럼 모델 ID(`org/model`)를 입력해 추가한다 (Inference Providers, `api/llm_gateway/hf_models.py`).
-  Hub에서 모델과 'live' 추론 제공사를 확인하고, **도구 호출을 지원하는 제공사**를 골라 `huggingface/<제공사>/<org>/<model>`로 고정한다
-  (고정하지 않으면 도구 호출을 못 하는 제공사로 라우팅될 수 있다). 없는 모델·제공사 없는 모델은 등록하지 않는다.
-  비용은 LiteLLM 가격표에 없어 대시보드에 0으로 집계된다 (청구는 HF 계정 — 선불 크레딧이 없으면 호출이 거절된다).
-- **Ollama 탭**: 등록된 Ollama 모델의 다운로드·삭제. (로컬 런타임은 현재 Ollama만 지원한다)
+- **Ollama 탭**: 등록된 Ollama 모델의 다운로드·삭제. 로컬 런타임은 Ollama만 쓰고, **이 PC에서 도는 모델만** 쓴다
+  (컨테이너에 `OLLAMA_NO_CLOUD=1` — 클라우드 모델 실행이 막히고, 커스텀 모델 추가에서도 `…-cloud` 태그를 거부한다).
+- Hugging Face **클라우드 추론(Inference Providers)은 지원하지 않는다**. 호출 계층에 `huggingface/` 접두사가 없어
+  그런 모델 ID는 등록·호출 단계에서 거부된다. HF는 모델 **다운로드** 인증에만 쓴다 (아래 API 키 관리).
 - 아직 받지 않은 로컬 모델로 채팅하면 `400 "… 마이 페이지 > 모델 설정에서 다운로드하세요."`를 돌려준다.
 - 로컬(Ollama) 모델은 마이 페이지의 **다운로드** 버튼으로 받고, **삭제** 버튼으로 지운다. 서버가 백그라운드로 받고, 화면은 진행률을 보여준다
   (페이지를 떠나도 계속 받는다). Ollama는 서버 전체가 공유하므로 한 번 받으면 모든 사용자에게 설치된 것으로 보인다.
@@ -204,7 +202,9 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
   서버가 받기 시작하고 `llm_models`에 `is_custom`으로 등록된다. 채팅 선택 목록의 '커스텀' 그룹에 보이며, 표시 이름은 ✎로 바꾼다.
   - 없는 모델명은 Ollama가 몇 초 안에 거절하므로 등록하지 않고 오류만 보여준다. `ollama run …`·ollama.com 주소를 붙여 넣어도 모델명만 쓴다.
   - 도구 호출(tools)을 지원하지 않는 모델은 경고를 표시한다. 이 챗봇은 법령·웹 검색에 도구를 쓰므로 답변이 실패할 수 있다.
-  - 최신 모델 중에는 더 새 Ollama가 필요한 것이 있다 (예: `lfm3-omni:2b`). 이때는 `docker/ollama/Dockerfile`의 버전을 올려야 한다.
+  - 최신 모델 중에는 더 새 Ollama가 필요한 것이 있다 (예: `lfm3-omni:2b`). 이때는 런타임 버전 카드에서 Ollama를 올린다.
+  - Hugging Face GGUF 저장소는 `hf.co/org/repo`로 넣으면 `huggingface.co/…`로 바꿔 받는다 (Ollama가 `hf.co`로는 승인 저장소의
+    인증 단계에서 'realm host' 오류로 멈추기 때문). 승인(gated)·비공개 저장소는 API 키 화면의 Ollama SSH 공개키를 HF 계정에 등록해야 한다.
   - 삭제는 받는 중이면 취소하고, 받아져 있으면 파일까지 지운 뒤 목록에서 뺀다.
   - `sync_llm_models.py --prune`은 커스텀 모델을 지우지 않는다.
 
@@ -223,8 +223,6 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
 | `POST /chatbot/models/api` | `{modelId}` API 모델 추가 |
 | `POST /chatbot/models/api/delete` | `{modelId}` API 모델 삭제 (기본 제공 모델은 복원 가능, 기본 모델은 불가) |
 | `POST /chatbot/models/api/restore` | `{provider}` 삭제한 기본 제공 모델 되살리기 |
-| `POST /chatbot/models/hf` | `{name, label?}` Hugging Face 모델 추가 (Hub 확인 후 도구 호출 지원 제공사로 고정) |
-| `POST /chatbot/models/hf/delete` | `{modelId}` Hugging Face 모델 삭제 |
 | `GET /chatbot/runtime` | Ollama·LiteLLM 현재/최신/(LiteLLM) 최신 호환 버전, 릴리스 목록, 진행 중·마지막 작업 |
 | `POST /chatbot/runtime/update` | `{ollama?, litellm?}` 버전 변경 시작 (둘 다 주면 한 번에) |
 | `GET /chatbot/runtime/update` | 진행 단계·로그 |
@@ -232,18 +230,22 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
 
 ### API 키 관리 (`/keys`)
 
-사이드바 **API 키** 화면에서 OpenAI · Gemini · Anthropic · Hugging Face · Ollama(클라우드) 키와 법제처 `LAW_OC`를
+사이드바 **API 키** 화면에서 OpenAI · Gemini · Anthropic 키, Hugging Face 다운로드 토큰(`HF_TOKEN`), 법제처 `LAW_OC`를
 입력·변경·삭제하고 **연결 확인**을 한다 (`api/chatbot/keys.py`). 개인 PC용 서비스라 키는 이 PC의 루트 `.env`에 저장하고
 (`api/env_store.py` — 해당 줄만 바꾸고 나머지는 그대로 둔다), 응답에는 원문 대신 앞뒤 4글자만 담는다.
 
 | 키 | 저장 후 적용 |
 | --- | --- |
 | OpenAI · Gemini · Anthropic | 바로 (LiteLLM이 호출마다 환경 변수를 읽는다) |
-| Hugging Face · Ollama | 모델 인스턴스 캐시를 비워 새 키로 다시 만든다 |
+| Hugging Face (`HF_TOKEN`) | 바로 — 모델 **다운로드** 인증(`huggingface_hub`, 예: 법령 별표 OCR 모델)에만 쓰고 호출에는 쓰지 않는다. 예전 이름(`HUGGINGFACEHUB_API_TOKEN` — huggingface_hub가 읽지 않는다)이면 저장할 때 `HF_TOKEN`으로 옮긴다 |
 | `LAW_OC` | korean-law-mcp 컨테이너를 다시 만들고 '민법' 검색으로 인증 확인. docker-compose 필수 값이라 삭제는 막는다 |
 
 연결 확인은 토큰을 쓰지 않는 요청만 보낸다 (모델 목록·계정 조회: OpenAI `/v1/models`, Gemini `models`, Anthropic `/v1/models`,
-HF `whoami-v2`, ollama.com `POST /api/me`, LAW_OC는 법령 검색).
+HF `whoami-v2`, LAW_OC는 법령 검색).
+
+Ollama는 로컬 모델만 쓰므로 키가 없다. 대신 같은 화면에 **Ollama SSH 공개키**(`GET /chatbot/keys/ollama-ssh`)를 보여준다 —
+Ollama의 `hf.co`/`huggingface.co` 다운로드는 `HF_TOKEN`이 아니라 이 키로 인증하므로, HF 계정 > SSH and GPG keys에 등록해야
+승인·비공개 저장소를 받을 수 있다.
 
 | API | 용도 |
 | --- | --- |

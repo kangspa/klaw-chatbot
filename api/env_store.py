@@ -47,6 +47,25 @@ def write_env_values(updates: dict[str, str], comment: str = "") -> None:
     os.environ.update(updates)
 
 
+def rename_env_key(old: str, new: str) -> bool:
+    """키 이름만 바꾼다 (값·위치 유지). 예전 변수 이름을 표준 이름으로 옮길 때 쓴다. 바꿨으면 True."""
+    with _lock:
+        if not ENV_FILE.exists():
+            return False
+        lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
+        changed = False
+        for i, line in enumerate(lines):
+            m = _LINE.match(line)
+            if m and not line.lstrip().startswith("#") and m.group(1) == old:
+                lines[i] = f"{new}={m.group(2)}"
+                changed = True
+        if changed:
+            ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if changed and old in os.environ:
+        os.environ[new] = os.environ.pop(old)
+    return changed
+
+
 def remove_env_keys(keys: list[str]) -> None:
     """키 줄을 지운다 (바로 위의 주석은 남긴다). os.environ에서도 뺀다."""
     with _lock:

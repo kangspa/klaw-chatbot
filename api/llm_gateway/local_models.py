@@ -54,6 +54,15 @@ def normalize_ollama_name(raw: str) -> str:
         raise ValueError("모델명을 입력하세요. 예: lfm3-omni:2b")
     if len(name) > 200 or ".." in name or not _OLLAMA_NAME_RE.match(name):
         raise ValueError(f"Ollama 모델명 형식이 아닙니다: {raw!r} (예: lfm3-omni:2b, qwen3.8:27b-q4_K_M)")
+    if name.lower().startswith("hf.co/"):
+        # Ollama는 hf.co/로 받으면 승인(gated)·비공개 저장소의 인증 단계에서 'realm host huggingface.co does not match
+        # original host hf.co' 오류로 멈춘다. huggingface.co/로 받으면 공개 저장소는 똑같이 받아지고, 승인 저장소는
+        # Ollama SSH 키 인증까지 간다 (API 키 화면의 공개키를 HF 계정에 등록해 두면 받아진다).
+        name = "huggingface.co/" + name[len("hf.co/"):]
+    tag = name.rsplit(":", 1)[1].lower() if ":" in name else ""
+    if tag == "cloud" or tag.endswith("-cloud"):
+        # Ollama 클라우드 모델은 이 PC가 아니라 ollama.com에서 실행된다 — 로컬 모델만 지원한다
+        raise ValueError(f"'{name}'은 Ollama 클라우드 모델이라 지원하지 않습니다. 이 PC에서 실행되는 로컬 모델만 추가할 수 있습니다.")
     return name
 
 
@@ -77,6 +86,11 @@ def friendly_pull_error(message: str, name: str) -> str:
         current = ollama_version() or "알 수 없음"
         return (f"'{name}' 모델은 더 새 버전의 Ollama가 필요합니다 (서버 Ollama {current}). "
                 "docker/ollama/Dockerfile의 Ollama 버전을 올린 뒤 컨테이너를 다시 빌드하세요.")
+    if name.lower().startswith(("huggingface.co/", "hf.co/")) and ("401" in message or "403" in message):
+        return (f"'{name}'은 Hugging Face 승인(gated)·비공개 저장소입니다. API 키 화면의 'Ollama SSH 공개키'를 "
+                "Hugging Face 계정 > Settings > SSH and GPG keys에 등록하고, 모델 페이지에서 사용 승인을 받은 뒤 다시 추가하세요.")
+    if "realm host" in message:
+        return f"'{name}'은 인증이 필요한 저장소입니다. 이름을 huggingface.co/로 시작하도록 바꿔 다시 추가하세요."
     if "file does not exist" in message or "not found" in message.lower():
         return f"Ollama에서 '{name}' 모델을 찾을 수 없습니다. 모델명과 태그를 확인하세요 (예: lfm3-omni:2b)."
     return f"'{name}' 모델을 받지 못했습니다: {message}"

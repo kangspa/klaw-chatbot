@@ -11,9 +11,10 @@
   ollama/<태그>      ollama_chat/       Ollama (도구 호출 지원 chat API)   OLLAMA_BASE_URL (기본 http://localhost:11434)
   lmstudio/<모델>    lm_studio/         LM Studio              LMSTUDIO_BASE_URL (기본 http://localhost:1234/v1)
   vllm/<모델>        hosted_vllm/       vLLM                   VLLM_BASE_URL (기본 http://localhost:8000/v1)
-  huggingface/<모델> huggingface/       HF Inference Providers HF_TOKEN (또는 HUGGINGFACEHUB_API_TOKEN)
 
 DB(llm_models.options)의 추가 인자는 LiteLLM 호출 인자로 그대로 넘긴다 (예: Ollama num_ctx).
+Hugging Face 클라우드 추론(Inference Providers)은 일부러 지원하지 않는다 — HF는 모델 다운로드 인증(HF_TOKEN)에만 쓴다.
+Ollama도 로컬 모델만 쓴다 (클라우드 모델은 컨테이너의 OLLAMA_NO_CLOUD=1로 막는다) — 그래서 API 키를 넘기지 않는다.
 """
 import os
 from typing import Any, Optional
@@ -29,12 +30,11 @@ _PROVIDERS: dict[str, tuple[str, Optional[str], Optional[str], tuple[str, ...], 
     "gemini": ("gemini", None, None, (), None),
     "openai": ("openai", None, None, (), None),
     "anthropic": ("anthropic", None, None, (), None),
-    "ollama": ("ollama_chat", "OLLAMA_BASE_URL", "http://localhost:11434", ("OLLAMA_API_KEY",), None),
-    "ollama_chat": ("ollama_chat", "OLLAMA_BASE_URL", "http://localhost:11434", ("OLLAMA_API_KEY",), None),
+    "ollama": ("ollama_chat", "OLLAMA_BASE_URL", "http://localhost:11434", (), None),
+    "ollama_chat": ("ollama_chat", "OLLAMA_BASE_URL", "http://localhost:11434", (), None),
     # 로컬 서버는 키를 검사하지 않지만 OpenAI 호환 클라이언트가 값을 요구하므로 더미 키를 넣는다.
     "lmstudio": ("lm_studio", "LMSTUDIO_BASE_URL", "http://localhost:1234/v1", ("LMSTUDIO_API_KEY",), "lm-studio"),
     "vllm": ("hosted_vllm", "VLLM_BASE_URL", "http://localhost:8000/v1", ("VLLM_API_KEY",), "EMPTY"),
-    "huggingface": ("huggingface", None, None, ("HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN"), None),
 }
 
 # 로컬 런타임 (요청 타임아웃을 두지 않고, 비용은 0으로 본다)

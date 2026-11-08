@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type KeyboardEvent } from 'react'
+import { Link } from 'react-router-dom'
 import {
   addCustomModel,
   deleteCustomModel,
@@ -92,6 +93,8 @@ export default function CustomModelsCard({
         <p className="settings__card-desc">
           <a href="https://ollama.com/search" target="_blank" rel="noreferrer">Ollama 모델 목록</a>에서
           모델명을 그대로 입력하면 서버에 받아 채팅에서 쓸 수 있습니다. 도구 호출(tools)을 지원하는 모델이어야 제대로 답변합니다.
+          Hugging Face GGUF 저장소도 <code>hf.co/org/repo</code>로 받을 수 있고, 승인이 필요한 저장소는
+          <Link to="/keys">API 키</Link> 화면의 Ollama SSH 공개키를 Hugging Face 계정에 등록해야 합니다.
         </p>
       </div>
 

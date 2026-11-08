@@ -2,7 +2,7 @@
   "_안내": {
     "용도": "llm_models 테이블 초기 데이터. 테이블이 비어 있으면 서버 시작 시 자동으로 채워진다.",
     "반영": "이 파일을 고친 뒤 DB에 반영하려면 `uv run python scripts/sync_llm_models.py` (파일에 없는 모델까지 지우려면 --prune).",
-    "id": "'접두사/모델명'. API 요청의 model 값과 같다. 접두사: gemini, openai, anthropic, ollama, lmstudio, vllm, huggingface",
+    "id": "'접두사/모델명'. API 요청의 model 값과 같다. 접두사: gemini, openai, anthropic, ollama, lmstudio, vllm",
     "label / group / sort_order": "선택 목록 표시명, 그룹, 정렬 순서 (그룹 순서는 그룹 내 가장 작은 sort_order 기준)",
     "enabled": "false면 목록에서 숨기고 호출도 거부",
     "is_default": "요청에 모델이 없을 때 쓰는 기본 모델. 하나만 true",

@@ -114,6 +114,7 @@ services:
       - ollama_models:/root/.ollama
     environment:
       - OLLAMA_KEEP_ALIVE=10m     # 마지막 요청 후 모델을 메모리에 유지하는 시간
+      - OLLAMA_NO_CLOUD=1         # 클라우드 모델(…-cloud)·ollama.com 연동을 끈다 — 이 PC에서 도는 로컬 모델만 쓴다
     restart: always
 
 volumes:

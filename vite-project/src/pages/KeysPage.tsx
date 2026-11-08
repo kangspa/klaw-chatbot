@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { deleteKey, listKeys, setKey, testKey, type ApiKeyItem } from '../services/keys'
+import { deleteKey, getOllamaSshKey, listKeys, setKey, testKey, type ApiKeyItem } from '../services/keys'
 
 /** LAW_OC 저장 후 법령 검색 서버 재시작·인증 확인 진행 상태 조회 주기 */
 const APPLY_POLL_MS = 2000
 
 const APPLY_NOTE: Record<ApiKeyItem['apply'], string> = {
   immediate: '저장하면 바로 적용됩니다.',
-  reset_models: '저장하면 바로 적용됩니다 (해당 모델을 새로 연결).',
   restart_law: '저장하면 법령 검색 서버를 다시 시작하고 인증을 확인합니다 (10초 안팎).',
 }
 
@@ -60,7 +59,66 @@ export default function KeysPage() {
           {keys.map((k) => <KeyRow key={k.id} item={k} onUpdated={update} />)}
         </ul>
       </section>
+
+      <OllamaSshCard />
     </div>
+  )
+}
+
+/**
+ * Ollama가 Hugging Face의 승인(gated)·비공개 저장소(hf.co/…)를 받을 때 쓰는 SSH 공개키.
+ * Ollama는 HF_TOKEN이 아니라 이 키로 인증하므로, 키를 HF 계정에 등록해야 한다. 공개키라 보여줘도 안전하다.
+ */
+function OllamaSshCard() {
+  const [key, setKey] = useState<{ available: boolean; publicKey: string | null; message: string } | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    getOllamaSshKey().then(
+      (k) => { if (alive) setKey(k) },
+      (e) => { if (alive) setKey({ available: false, publicKey: null, message: e instanceof Error ? e.message : '불러오지 못했습니다.' }) },
+    )
+    return () => { alive = false }
+  }, [])
+
+  const copy = async () => {
+    if (!key?.publicKey) return
+    try {
+      await navigator.clipboard.writeText(key.publicKey)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch { /* 클립보드 권한이 없으면 직접 선택해 복사 */ }
+  }
+
+  return (
+    <section className="settings__card">
+      <div className="settings__card-head">
+        <h2 className="settings__card-title">Ollama ↔ Hugging Face 다운로드 인증</h2>
+        <p className="settings__card-desc">
+          Ollama로 Hugging Face의 승인(gated)·비공개 저장소를 받으려면 아래 공개키를 Hugging Face 계정에 등록하세요.
+          Ollama는 위의 Hugging Face 토큰이 아니라 이 키로 인증합니다.
+        </p>
+      </div>
+      {key === null && <p className="settings__empty">불러오는 중…</p>}
+      {key && !key.available && <p className="model-row__hint">{key.message}</p>}
+      {key?.publicKey && (
+        <>
+          <div className="ssh-key">
+            <code className="ssh-key__value">{key.publicKey}</code>
+            <button className="btn btn--outline btn--sm" onClick={() => void copy()}>{copied ? '복사됨' : '복사'}</button>
+          </div>
+          <ol className="ssh-steps">
+            <li>
+              <a href="https://huggingface.co/settings/keys" target="_blank" rel="noreferrer">Hugging Face › Settings › SSH and GPG keys</a>
+              에서 <strong>Add SSH key</strong>를 눌러 위 키를 붙여 넣습니다.
+            </li>
+            <li>받으려는 모델 페이지에서 사용 조건에 동의해 접근 승인을 받습니다 (승인 필요 모델만).</li>
+            <li>마이 페이지 › 커스텀 모델에 <code>hf.co/org/repo</code>를 입력해 추가합니다.</li>
+          </ol>
+        </>
+      )}
+    </section>
   )
 }
 
