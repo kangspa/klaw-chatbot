@@ -15,8 +15,12 @@ import subprocess
 import urllib.request
 from typing import Optional
 
-# docker/ollama/Dockerfile에 고정한 Ollama 버전
+# docker/ollama/Dockerfile의 기본 Ollama 버전. 마이 페이지에서 바꾸면 .env의 OLLAMA_VERSION이 우선한다.
 TESTED_OLLAMA_VERSION = "0.34.4"
+
+
+def expected_ollama_version() -> str:
+    return os.getenv("OLLAMA_VERSION") or TESTED_OLLAMA_VERSION
 
 _GPU_LIBRARIES = {"CUDA": "NVIDIA CUDA", "ROCm": "AMD ROCm", "Vulkan": "Vulkan", "Metal": "Apple Metal"}
 
@@ -147,8 +151,8 @@ def report_local_runtime(model_ids: list[str]) -> None:
         print(f"[local-llm] Ollama({ollama_base_url()})에 연결할 수 없어 로컬 모델 {len(model_ids)}개를 쓸 수 없습니다. "
               "→ uv run python scripts/setup_local_llm.py --apply")
         return
-    if version != TESTED_OLLAMA_VERSION:
-        print(f"[local-llm] Ollama {version} (고정 버전 {TESTED_OLLAMA_VERSION}과 다름)")
+    if version != expected_ollama_version():
+        print(f"[local-llm] Ollama {version} (설정 버전 {expected_ollama_version()}과 다름)")
     installed = ollama_models()
     missing = [m for m in model_ids if m.split("/", 1)[1] not in installed]
     print(f"[local-llm] Ollama {version} / 가속: {describe_acceleration(read_discovery(ollama_log_text()))}")

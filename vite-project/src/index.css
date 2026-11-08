@@ -772,6 +772,42 @@ a:hover { text-decoration: underline; }
 .model-row__rename { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .model-row__rename-input { flex: 1; min-width: 160px; padding: 6px 10px; font-size: 14px; }
 
+/* 로컬 모델 서버(Ollama) 버전 */
+.ollama-info { display: grid; gap: 8px; margin: 0 0 14px; }
+.ollama-info > div { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.ollama-info dt { width: 64px; flex: 0 0 auto; font-size: 13px; color: var(--muted); font-weight: 600; }
+.ollama-info dd { margin: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; min-width: 0; }
+.ollama-info dd strong { font-size: 15px; }
+.ollama-info__muted { color: var(--muted); }
+.ollama-upgrade { display: flex; gap: 8px; }
+.ollama-upgrade__select {
+  flex: 1; min-width: 0; padding: 8px 10px; font-size: 14px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text);
+}
+.upgrade-job { margin-top: 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.upgrade-job--done { border-color: #b8e2c5; }
+.upgrade-job--error { border-color: #f1c2c2; }
+.upgrade-job__head {
+  display: flex; justify-content: space-between; gap: 10px; align-items: center;
+  padding: 10px 12px; background: var(--surface-2); font-size: 13px; font-weight: 600;
+}
+.upgrade-job--done .upgrade-job__head { background: #e7f6ec; color: #1e7a3d; }
+.upgrade-job--error .upgrade-job__head { background: var(--danger-tint); color: var(--danger); }
+.upgrade-job__title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.upgrade-job__time { font-weight: 500; color: var(--muted); flex: 0 0 auto; }
+.upgrade-job__message { padding: 8px 12px 0; font-size: 13px; overflow-wrap: anywhere; }
+.upgrade-job__log {
+  margin: 0; padding: 10px 12px; max-height: 220px; overflow: auto;
+  background: #0f1524; color: #c9d3e6; font-size: 12px; line-height: 1.5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all;
+}
+.upgrade-job__message + .upgrade-job__log { margin-top: 8px; }
+.upgrade-job__spinner {
+  width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto;
+  border: 2px solid var(--border); border-top-color: var(--primary); animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .storage-total { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; color: var(--muted); font-size: 14px; }
 .storage-total strong { color: var(--text); font-size: 22px; letter-spacing: -0.3px; }
 .storage-total__count { font-size: 13px; }

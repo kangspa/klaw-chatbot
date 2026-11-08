@@ -207,6 +207,9 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
 | `POST /chatbot/models/custom/delete` | `{modelId}` 다운로드 취소·파일 삭제 후 커스텀 목록에서 제거 |
 | `GET /chatbot/models/storage` | Ollama에 받아진 모델 전체와 용량 (`registered: false` = 파일만 남은 모델) |
 | `POST /chatbot/models/delete` | `{modelId}` 로컬 모델 파일 삭제 (받는 중이면 409) |
+| `GET /chatbot/ollama` | 실행·설정 Ollama 버전, 가속 장치, 선택 가능한 릴리스, 진행 중인 버전 변경 |
+| `POST /chatbot/ollama/upgrade` | `{version}` Ollama 버전 변경 시작 (다운로드 중이면 409) |
+| `GET /chatbot/ollama/upgrade` | 버전 변경 진행 단계·로그 |
 
 초기 데이터는 `api/llm_gateway/seed_models.json`이다. 테이블이 비어 있으면 서버 시작 시 자동으로 채워지고,
 이후 JSON을 고쳤다면 아래 스크립트로 반영한다.
@@ -219,8 +222,15 @@ uv run python scripts/sync_llm_models.py --prune   # JSON에 없는 모델까지
 ### 로컬 모델 (Docker Ollama)
 
 로컬 모델은 다른 서비스와 마찬가지로 Docker 컨테이너(`ollama`, 포트 11434)로 띄운다.
-이미지는 `docker/ollama/Dockerfile` — Ollama 0.34.4 + CUDA·Vulkan 백엔드 + Mesa 드라이버(ANV/RADV/Dozen)를
+이미지는 `docker/ollama/Dockerfile` — Ollama + CUDA·Vulkan 백엔드 + Mesa 드라이버(ANV/RADV/Dozen)를
 버전 고정으로 담은 단일 이미지다.
+
+**Ollama 버전**은 루트 `.env`의 `OLLAMA_VERSION` / `OLLAMA_SHA256`(없으면 0.34.4)으로 정해지고, 이미지는
+`klaw-ollama:<버전>` 태그로 버전마다 따로 남는다. 마이 페이지 **로컬 모델 서버 (Ollama)** 에서 버전을 고르면 서버가
+GitHub 릴리스의 SHA-256을 확인 → 이미지 빌드 → 컨테이너 재시작 → 버전·GPU 인식 확인까지 하고, 성공하면 두 값을 `.env`에 적는다.
+확인에 실패하면(응답 없음, 이전엔 잡히던 GPU를 못 잡음 등) 이전 버전 이미지로 자동으로 되돌린다. 받아 둔 모델은 볼륨에 있어 그대로 남는다.
+최신 모델 중에는 새 Ollama가 필요한 것이 있다 (예: `lfm3-omni:2b`는 0.34.4에서 받을 수 없다).
+백엔드가 docker CLI가 있는 호스트에서 실행되어야 한다 (개인 PC 사용 전제 — 별도 권한 확인 없음).
 
 GPU 가속은 호스트마다 컨테이너에 넘길 장치가 달라서, **설정 스크립트가 호스트를 감지해
 `docker-compose.override.yml`(docker compose가 자동 병합, git 제외)을 만든다.**

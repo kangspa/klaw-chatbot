@@ -28,6 +28,11 @@ async def resolve_model(model: Optional[str]) -> str:
     spec = await MODEL_REGISTRY.resolve(model)
     name = ollama_name(spec.id)
     if name is not None:
+        from api.llm_gateway.ollama_upgrade import UPGRADER
+        if UPGRADER.running:
+            raise ModelNotAvailableError(
+                f"로컬 모델 서버(Ollama)를 {UPGRADER.job.target} 버전으로 바꾸는 중입니다. 완료된 뒤 다시 시도하세요."
+            )
         pull = PULL_MANAGER.get(spec.id)
         if pull is not None and pull.status == "pulling":
             pct = pull.to_dict()["percent"]

@@ -18,6 +18,7 @@ RUN echo "Server = https://archive.archlinux.org/repos/${ARCH_SNAPSHOT}/\$repo/o
  && pacman -S --noconfirm --needed vulkan-icd-loader vulkan-dzn vulkan-intel vulkan-radeon zstd curl ca-certificates \
  && pacman -Scc --noconfirm
 
+# 기본값. 실제 값은 docker-compose.yml이 .env의 OLLAMA_VERSION / OLLAMA_SHA256로 넘긴다 (마이 페이지에서 변경 가능)
 ARG OLLAMA_VERSION=0.34.4
 ARG OLLAMA_SHA256=c238986e61d40c0cc5f4a9b9e40b9eea104350b77efa34741fc134e105cb9533
 RUN curl -fsSL -o /tmp/ollama.tar.zst \

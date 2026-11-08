@@ -112,6 +112,13 @@ async def _registered(model_id: str):
     return spec
 
 
+def _ensure_not_upgrading() -> None:
+    """Ollama 버전을 바꾸는 동안에는 컨테이너가 내려갔다 올라오므로 다운로드·삭제를 받지 않는다."""
+    from api.llm_gateway.ollama_upgrade import UPGRADER
+    if UPGRADER.running:
+        raise HTTPException(status_code=409, detail="로컬 모델 서버(Ollama) 버전을 바꾸는 중입니다. 완료된 뒤 다시 시도하세요.")
+
+
 @router.get("", response_model=list[ModelOption])
 async def list_models(current_user: dict[str, Any] = Depends(get_current_user)):
     """선택 가능한 모델 목록 (DB llm_models 중 활성 모델, sort_order 순)."""
@@ -166,6 +173,7 @@ async def start_pull(data: PullRequest, current_user: dict[str, Any] = Depends(g
     로컬 모델 다운로드를 시작한다 (이미 받는 중이면 그 상태를 돌려준다).
     Ollama는 서버 전체가 공유하므로 받은 모델은 모든 사용자에게 설치된 것으로 보인다.
     """
+    _ensure_not_upgrading()
     await _registered(data.modelId)
     if ollama_name(data.modelId) is None:
         raise HTTPException(status_code=400, detail="이 모델은 서버에서 다운로드할 수 없습니다 (Ollama 모델만 지원).")
@@ -220,6 +228,7 @@ async def delete_local_model(data: DeleteRequest, current_user: dict[str, Any] =
     지울 수 있는 것은 Ollama에 실제로 받아져 있는 모델뿐이다 (등록 여부와 무관 — 파일만 남은 모델 정리용).
     모델 목록(llm_models) 항목은 그대로 남으므로 다시 쓰려면 마이 페이지에서 다시 다운로드하면 된다.
     """
+    _ensure_not_upgrading()
     name = ollama_name(data.modelId)
     if name is None:
         raise HTTPException(status_code=400, detail="서버에 저장되는 로컬(Ollama) 모델만 삭제할 수 있습니다.")
@@ -273,6 +282,7 @@ async def add_custom(data: CustomAddRequest, current_user: dict[str, Any] = Depe
     받기 시작했으면 등록하고, 나머지 다운로드는 백그라운드로 계속된다.
     """
     _require_db()
+    _ensure_not_upgrading()
     try:
         name = normalize_ollama_name(data.name)
     except ValueError as e:
@@ -321,6 +331,7 @@ async def delete_custom(data: DeleteRequest, current_user: dict[str, Any] = Depe
     파일 삭제는 로컬 모델 삭제(POST /chatbot/models/delete)와 같다 — 서버 전체에서 지워진다.
     """
     _require_db()
+    _ensure_not_upgrading()
     spec = await _custom_spec(data.modelId)
     name = ollama_name(spec.id)
     freed = 0

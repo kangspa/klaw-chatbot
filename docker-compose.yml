@@ -93,12 +93,17 @@ services:
       retries: 3
     restart: always
   ollama:
-    # 로컬 LLM 서버. 이미지는 docker/ollama/Dockerfile (Ollama 0.34.4 + CUDA/Vulkan/Dozen 드라이버, 버전 고정)
+    # 로컬 LLM 서버. 이미지는 docker/ollama/Dockerfile (Ollama + CUDA/Vulkan/Dozen 드라이버, 버전 고정)
     # 기본은 CPU로 동작한다. GPU 가속은 호스트마다 넘길 장치가 달라서(NVIDIA / Linux /dev/dri / WSL2 /dev/dxg)
     # scripts/setup_local_llm.py가 호스트를 감지해 docker-compose.override.yml(자동 병합, git 제외)에 적는다.
+    # Ollama 버전은 루트 .env의 OLLAMA_VERSION / OLLAMA_SHA256 (없으면 아래 기본값). 마이 페이지에서 바꾸면
+    # 서버가 이 두 값을 .env에 적고 이미지를 버전별 태그로 새로 빌드한다 (이전 태그는 되돌리기용으로 남긴다).
     build:
       context: ./docker/ollama
-    image: klaw-ollama:0.34.4
+      args:
+        OLLAMA_VERSION: ${OLLAMA_VERSION:-0.34.4}
+        OLLAMA_SHA256: ${OLLAMA_SHA256:-c238986e61d40c0cc5f4a9b9e40b9eea104350b77efa34741fc134e105cb9533}
+    image: klaw-ollama:${OLLAMA_VERSION:-0.34.4}
     container_name: ollama
     ports:
       - "11434:11434"             # 앱은 OLLAMA_BASE_URL(기본 http://localhost:11434)로 접근
