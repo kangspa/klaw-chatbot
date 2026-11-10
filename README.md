@@ -76,7 +76,7 @@
 | **SQLite (users)** | 회원 정보 | 회원 1명 = 1행 |
 | **SQLite (chat_*)** | 사용자에게 그대로 보여줄 대화 원문 (진실 원본) | 메시지 1건 = 1행 |
 | **Qdrant** | AI가 과거 대화를 의미 검색하기 위한 벡터 | 대화 1턴(질문+답변) = 1 point |
-| **LangGraph checkpointer** | 진행 중인 대화의 실행 상태 (MemorySaver, 서버 재시작 시 휘발) | thread 1개 = 세션 1개 |
+| **LangGraph checkpointer** | 진행 중인 대화의 실행 상태 — 최근 메시지·턴/단기/장기 요약·엔티티 기억 (SQLite `data/checkpoints.db`, 앱을 다시 켜도 이어짐. 대화마다 최근 체크포인트 3개만 유지) | thread 1개 = 세션 1개 |
 
 연결 키
 
@@ -132,7 +132,8 @@ cd vite-project && npm run dev   # 프론트 (http://localhost:5173)
 | `GOOGLE_CLIENT_ID` | (선택) Google OAuth 웹 클라이언트 ID. 비어 있어도 앱은 그대로 쓰고, 마이 페이지의 Google 계정 연결만 안내 문구로 바뀐다 |
 | `ANNEX_OCR_ENABLED` | 이미지 기반 별표(PDF) 응답을 PaddleOCR로 텍스트화하는 후처리. 기본 켜짐, `0`이면 끔 |
 | `CHAT_FALLBACK_MODELS` | 기본 모델 실패(429 등) 시 순차 폴백할 모델 목록 (쉼표 구분, 선택). DB에 등록·활성화된 모델만 사용 |
-| `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | 각 클라우드 모델 호출용. Gemini 키는 임베딩(대화 기억)에도 쓰이므로 필수 |
+| `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | 각 클라우드 모델 호출용. Gemini 키는 대화 기록 임베딩을 `gemini`로 골랐을 때도 쓴다 |
+| `EMBEDDING_PROVIDER` | 대화 기록 검색용 임베딩 방식 `local`(기본) · `ollama` · `gemini`. 마이 페이지 카드에서 바꾸면 여기에 저장된다 |
 | `LAW_OC` | 법제처 Open API 인증값 (법령 검색). 바꾸면 법령 MCP를 다시 띄운다 |
 | `LLM_REQUEST_TIMEOUT` | 클라우드 모델 요청 타임아웃(초). 기본 300. 초과 시 재시도·폴백 |
 | `LLM_REGISTRY_TTL` | DB 모델 목록을 다시 읽는 주기(초). 기본 30 |
@@ -301,6 +302,26 @@ Ollama와 LiteLLM을 함께 바꾸면 **LiteLLM 호환성 확인 → Ollama 변�
 
 서버 시작 시에도 로컬 모델 상태(엔진 응답·모델 누락·가속 장치)를 점검해 로그(`[local-llm]`)로 알린다.
 
+### 대화 기록 검색 임베딩 (마이 페이지 > 대화 기록 검색)
+
+AI가 예전 대화를 찾을 때(`search_history`) 쓰는 임베딩 모델을 세 가지 중에서 고른다. 고른 값은 `.env`의 `EMBEDDING_PROVIDER`.
+
+| 방식 | 모델 | 크기 · 차원 | 실행 | 대화 원문 |
+| --- | --- | --- | --- | --- |
+| `local` (기본) | `intfloat/multilingual-e5-small` (int8 ONNX, fastembed) | 약 135MB · 384 | 앱 안에서 CPU — 키·Ollama 불필요 | PC 밖으로 안 나감 |
+| `ollama` | `hf.co/mradermacher/Qwen3-Embedding-0.6B-GGUF:Q4_K_M` | 약 396MB · 1024 | Ollama 엔진 (GPU 있으면 GPU). 런타임 버전 카드에서 엔진 먼저 설치 | PC 밖으로 안 나감 |
+| `gemini` | `gemini/gemini-embedding-001` (LiteLLM) | — · 3072 | Google API, `GEMINI_API_KEY` 필요 | Google로 전송 |
+
+- 모델 파일은 처음 쓸 때 받는다 (`local`: `data/embeddings`, `ollama`: Ollama 모델 폴더). 받는 동안에도 앱은 뜨고 채팅은 되며,
+  그동안의 턴은 벡터 저장만 건너뛴다 (준비되면 아래 재인덱싱이 DB 원문으로 채운다).
+- 방식마다 차원·벡터 공간이 달라 Qdrant 컬렉션을 따로 쓴다: `conversation_history__local`, `conversation_history__ollama_qwen3`,
+  `conversation_history`(gemini — 예전 인덱스 그대로).
+- 방식을 바꾸면 **재인덱싱**이 백그라운드로 돈다: SQLite `chat_messages`의 질문·답변 쌍(`turn_id`)으로 새 컬렉션을 채운다
+  (이미 있는 턴은 건너뜀, `entity_keys`는 다른 컬렉션에 남은 같은 턴에서 이어받음). 진행률은 카드에 보이고, 그동안 새 턴은 새 컬렉션에 바로 저장된다.
+  서버 시작 시에도 빠진 턴만 채운다. 삭제·브랜치는 남아 있는 모든 컬렉션에 적용된다.
+- 이전 방식의 벡터는 자동으로 지우지 않는다 — 카드의 **안 쓰는 벡터 삭제**로 지운다.
+- API: `GET /chatbot/embeddings`, `POST /chatbot/embeddings/select {provider}`, `/reindex {full?}`, `/prepare {provider}`, `/delete-unused` (`api/chatbot/embeddings.py`)
+
 ## korean-law-mcp (git 서브모듈)
 
 `korean-law-mcp`는 git 서브모듈로 관리한다. 이 저장소에는 **검증한 특정 커밋**만 기록되므로,
@@ -354,10 +375,20 @@ uv run python scripts/reset_db.py --yes   # 확인 없이 실행
 ```
 
 - SQLite: 사용자·세션·메시지·사용량 기록 삭제 (모델 목록은 남김)
-- Qdrant: `conversation_history` 컬렉션 삭제 (서버 startup에서 자동 재생성)
-- LangGraph 상태(MemorySaver)는 서버를 재시작하면 함께 비워진다
+- Qdrant: 임베딩 방식별 대화 기록 컬렉션(`conversation_history*`) 전부 삭제 (서버 startup에서 지금 방식의 컬렉션 자동 재생성)
+- LangGraph 대화 상태: `data/checkpoints.db` 삭제 (요약·엔티티 기억 포함)
 
-앱을 완전히 지우려면 `%LOCALAPPDATA%\KLaw` 폴더(개발: 저장소의 `data/`·`logs/`·`.runtime/`)를 지우면 된다.
+## 앱 데이터 모두 삭제 (제거)
+
+마이 페이지 맨 아래 **앱 데이터 모두 삭제**: 설치형 프로그램의 '제거'처럼 동작한다 (`api/uninstall.py`, `/chatbot/app/*`).
+
+- 지우는 것: 앱 폴더 `%LOCALAPPDATA%\KLaw` 전체 — 대화 DB·대화 상태·벡터·Ollama 엔진과 모델·임베딩·OCR 모델·받은 LiteLLM·로그·`.env`(API 키),
+  강제 종료로 남은 지난 실행의 압축 해제 폴더(`%TEMP%\_MEI…`), 비어 있는 라이브러리 공용 캐시 폴더.
+  내용이 있는 공용 캐시(예전 버전이 만든 `~/.paddlex`, `~/.cache/huggingface` 등)와 `KLaw.exe` 파일은 고를 때만 지운다.
+- 흐름: 목록·용량 확인 → `삭제` 입력 → 서버가 삭제 도우미(exe 자신, `--klaw-uninstall`)를 띄우고 앱(트레이 포함)을 종료 →
+  도우미가 앱 프로세스가 끝나 파일 잠금이 풀리길 기다렸다가 지운다 → 완료 알림 창.
+- 라이브러리 캐시는 처음부터 앱 폴더로 돌려 둔다 (`HF_HOME`·`PADDLE_PDX_CACHE_HOME`·`MODELSCOPE_CACHE`·`CRAWL4_AI_BASE_DIRECTORY`, `api/stack.py`).
+- 개발 실행(저장소가 앱 폴더)에서는 저장소를 지우지 않고 `data/`·`logs/`·`.runtime/`만 지운다.
 
 # 데스크톱 exe (시스템 트레이 앱)
 

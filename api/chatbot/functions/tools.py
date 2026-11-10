@@ -2,7 +2,8 @@ import asyncio
 import os
 import sys
 
-from api.load_variable import MODEL_MANAGER, AgentState, GEMINI_EMBEDDINGS, QDRANT_DB
+from api.load_variable import MODEL_MANAGER, AgentState, EMBEDDINGS, QDRANT_DB
+from api.llm_gateway.embeddings import EmbeddingNotReady
 from pydantic import BaseModel, Field
 from typing import Optional, List, Annotated
 from langgraph.prebuilt import InjectedState
@@ -242,7 +243,9 @@ async def search_history(
     params = config.get("configurable", {})
     user_id = params.get("user_id", "default_user")
     thread_id = params.get("thread_id", "unknown_thread")
-    collection_name = "conversation_history"
+    # 지금 고른 임베딩 방식의 컬렉션 (질의 벡터도 같은 방식으로 만든다)
+    provider = EMBEDDINGS.active
+    collection_name = EMBEDDINGS.collection(provider)
 
     # 1. 기본 필터 설정 (현재 대화 세션만 조회)
     filter_conditions = [
@@ -275,7 +278,7 @@ async def search_history(
 
     try:
         # 5. 쿼리 벡터화
-        query_vector = await GEMINI_EMBEDDINGS.aembed_query(query)
+        query_vector = await EMBEDDINGS.aembed_query(query, provider=provider)
 
         # 6. Qdrant 검색 실행 (named vector 사용)
         # using 인자 사용해서 검색 진행
@@ -309,5 +312,8 @@ async def search_history(
         ])
         return final_text
 
+    except EmbeddingNotReady as e:
+        print(f"[search_history] 임베딩 {provider} 준비 안 됨: {e}")
+        return f"과거 대화 검색을 지금은 쓸 수 없습니다 ({e}). 현재 대화 맥락만으로 답하세요."
     except Exception as e:
         return f"검색 중 오류 발생: {str(e)}"

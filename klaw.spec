@@ -51,6 +51,8 @@ for pkg in [
     "crawl4ai", "playwright", "patchright", "fake_useragent",
     "paddle", "paddleocr", "paddlex", "cv2", "pymupdf", "fitz",
     "pystray", "PIL",
+    # 내장 임베딩(대화 기록 검색, api/llm_gateway/embeddings.py) — 모델 파일은 exe에 넣지 않고 처음 쓸 때 data/embeddings로 받는다
+    "fastembed", "onnxruntime", "py_rust_stemmers", "mmh3", "huggingface_hub", "hf_xet",
 ]:
     try:
         d, b, h = collect_all(pkg)

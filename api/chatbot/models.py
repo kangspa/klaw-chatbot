@@ -214,12 +214,17 @@ async def get_storage(current_user: dict[str, Any] = Depends(get_current_user)):
     if inventory is None:
         return StorageResponse(reachable=False, totalBytes=0, models=[])
     registered = _registered_ollama_names(await MODEL_REGISTRY.list_all())
+    # 대화 기록 검색용 임베딩 모델(설정의 '대화 기록 검색' 카드가 받는다)은 채팅 모델 목록에 없어도 '쓰는 모델'이다
+    from api.llm_gateway.embeddings import PROVIDERS as EMBEDDING_PROVIDERS
+    embed_name = EMBEDDING_PROVIDERS["ollama"].model
     models = []
     for m in sorted(inventory, key=lambda x: -x["size"]):
         spec = registered.get(m["name"])
+        is_embed = m["name"] in (embed_name, f"{embed_name}:latest")
         models.append(StoredModel(
             id=spec.id if spec else f"ollama/{m['name']}", name=m["name"], sizeBytes=m["size"],
-            registered=spec is not None, label=spec.label if spec else None,
+            registered=spec is not None or is_embed,
+            label=spec.label if spec else ("대화 기록 검색 임베딩 (Qwen3)" if is_embed else None),
         ))
     return StorageResponse(reachable=True, totalBytes=sum(m["size"] for m in inventory), models=models)
 

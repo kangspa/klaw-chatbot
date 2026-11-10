@@ -8,7 +8,9 @@ Google 로그인 도입으로 chat_sessions.owner_id의 의미가 바뀌었기 �
   - SQLite   : 사용자·대화·대시보드 기록 테이블 DROP 후 새 스키마로 재생성
                (users / chat_sessions / chat_messages / user_disabled_models / llm_usage / law_lookups)
                (llm_models는 설정 데이터라 지우지 않는다 — scripts/sync_llm_models.py 참고)
-  - Qdrant   : 로컬 모드 폴더(data/qdrant)의 conversation_history 컬렉션 삭제 (서버 startup에서 자동 재생성됨)
+  - Qdrant   : 로컬 모드 폴더(data/qdrant)의 대화 기록 컬렉션 전부 삭제 — 임베딩 방식마다 하나씩
+               (conversation_history = gemini, conversation_history__local, conversation_history__ollama_qwen3)
+               서버 startup에서 지금 고른 방식의 컬렉션이 자동 재생성된다. 임베딩 모델 파일(data/embeddings)·선택(.env)은 남긴다.
   - LangGraph: MemorySaver라 프로세스 메모리에만 있으므로 서버 재시작으로 비워짐
 
 반드시 앱(서버)을 끈 상태에서 실행한다. Qdrant 로컬 모드 폴더는 한 프로세스만 열 수 있다.
@@ -29,7 +31,8 @@ sys.path.insert(0, PROJECT_ROOT)
 from api import stack  # noqa: E402
 from api.db import SCHEMA_SQL, connect, db_path  # noqa: E402
 
-QDRANT_COLLECTION = "conversation_history"
+# 임베딩 방식별 컬렉션이 모두 이 이름으로 시작한다 (api/llm_gateway/embeddings.py PROVIDERS)
+QDRANT_COLLECTION_PREFIX = "conversation_history"
 
 # 지울 테이블 (자식 → 부모 순서). llm_models·llm_models_removed는 설정이라 남긴다.
 RESET_TABLES = ("user_disabled_models", "law_lookups", "llm_usage", "chat_messages", "chat_sessions", "users")
@@ -72,13 +75,16 @@ async def reset_qdrant() -> None:
     except Exception as e:   # 다른 프로세스(실행 중인 앱)가 폴더를 쥐고 있으면 열리지 않는다
         raise SystemExit(f"  Qdrant 로컬 폴더를 열 수 없습니다 — 앱을 먼저 종료하세요: {type(e).__name__}: {e}")
     try:
-        if await client.collection_exists(QDRANT_COLLECTION):
-            info = await client.get_collection(QDRANT_COLLECTION)
-            print(f"  기존 point 수: {info.points_count}")
-            await client.delete_collection(QDRANT_COLLECTION)
-            print(f"  컬렉션 '{QDRANT_COLLECTION}' 삭제 완료 (서버 startup에서 자동 재생성)")
-        else:
-            print(f"  컬렉션 '{QDRANT_COLLECTION}' 없음 — 건너뜀")
+        names = sorted(c.name for c in (await client.get_collections()).collections
+                       if c.name.startswith(QDRANT_COLLECTION_PREFIX))
+        if not names:
+            print("  대화 기록 컬렉션 없음 — 건너뜀")
+        for name in names:
+            info = await client.get_collection(name)
+            await client.delete_collection(name)
+            print(f"  컬렉션 '{name}' 삭제 완료 (point {info.points_count}개)")
+        if names:
+            print("  (서버 startup에서 지금 고른 임베딩 방식의 컬렉션이 자동 재생성)")
     finally:
         await client.close()
 
@@ -88,7 +94,7 @@ async def main() -> None:
     print("저장소 완전 초기화")
     print("=" * 60)
     print(f"  SQLite   : {db_path()}")
-    print(f"  Qdrant   : {stack.QDRANT_PATH} / conversation_history")
+    print(f"  Qdrant   : {stack.QDRANT_PATH} / {QDRANT_COLLECTION_PREFIX}* (임베딩 방식별 컬렉션 전부)")
     print("  ※ 앱(서버)이 실행 중이면 먼저 종료하세요 (Qdrant 로컬 폴더는 한 프로세스만 열 수 있다).")
     print()
 

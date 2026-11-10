@@ -1,7 +1,8 @@
-from api.load_variable import MODEL_MANAGER, AgentState, GEMINI_EMBEDDINGS, QDRANT_DB
+from api.load_variable import MODEL_MANAGER, AgentState, EMBEDDINGS, QDRANT_DB
+from api.llm_gateway.embeddings import EmbeddingNotReady
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import SystemMessage, AIMessage, RemoveMessage, HumanMessage
-from qdrant_client.models import PointStruct, VectorParams, Distance
+from qdrant_client.models import PointStruct
 from datetime import datetime
 import uuid, json
 from langgraph.graph import StateGraph, END
@@ -91,8 +92,9 @@ async def save_conversation(state: AgentState, config: RunnableConfig):
         iso_timestamp = now_obj.isoformat()
         unix_timestamp = now_obj.timestamp()
 
-    # 3. Qdrant 컬렉션
-    collection_name = "conversation_history"
+    # 3. Qdrant 컬렉션 — 지금 고른 임베딩 방식의 컬렉션 (방식을 이 턴 도중에 바꿔도 벡터와 컬렉션이 섞이지 않게 고정)
+    from api.chatbot.functions.qdrant_ops import ensure_collection
+    provider = EMBEDDINGS.active
 
     # 4. 저장용 텍스트 구성
     # - combined: 질문+답변 통합 (인과 맥락 보존, 일반 검색용)
@@ -111,10 +113,11 @@ async def save_conversation(state: AgentState, config: RunnableConfig):
 
     try:
         # 7. 3개 벡터를 배치 임베딩 (호출 1회로 처리하여 비용/지연 최소화)
-        vectors = await GEMINI_EMBEDDINGS.aembed_documents(
-            [combined_text, user_content, ai_content]
+        vectors = await EMBEDDINGS.aembed_documents(
+            [combined_text, user_content, ai_content], provider=provider
         )
         combined_vec, query_vec, response_vec = vectors
+        collection_name = await ensure_collection(provider)
 
         await QDRANT_DB.upsert(
             collection_name=collection_name,
@@ -138,7 +141,10 @@ async def save_conversation(state: AgentState, config: RunnableConfig):
                 )
             ]
         )
-        print(f"Qdrant 저장 성공 (User: {user_id}, Turn: {point_id}, Entities: {entity_keys})")
+        print(f"Qdrant 저장 성공 ({collection_name}, User: {user_id}, Turn: {point_id}, Entities: {entity_keys})")
+    except EmbeddingNotReady as e:
+        # 모델을 받는 중·엔진 없음·키 없음 — 채팅은 계속하고, 준비되면 재인덱싱(embedding_index)이 DB 원문으로 채운다
+        print(f"Qdrant 저장 건너뜀 (임베딩 {provider} 준비 안 됨): {e}")
     except Exception as e:
         print(f"Qdrant 저장 중 오류 발생: {e}")
 
@@ -603,43 +609,14 @@ memory_builder.add_edge("remove_entity", END)
 memory_manager_graph = memory_builder.compile()
 
 async def ensure_conversation_history_collection():
-    """서버 시작 시 호출 - conversation_history 컬렉션과 payload 인덱스를 보장"""
-    from qdrant_client.http import models as rest
+    """
+    서버 시작 시 호출 — 지금 고른 임베딩 방식의 컬렉션·payload 인덱스를 보장하고, 백그라운드로
+    임베딩 모델을 준비(내장 모델은 처음이면 받기)한 뒤 DB 원문과 벡터를 맞춘다(빠진 턴만 임베딩).
+    모델을 부르지 않으므로 받는 중·오프라인이어도 기동이 막히지 않는다.
+    """
+    from api.chatbot.functions import embedding_index
+    from api.chatbot.functions.qdrant_ops import ensure_collection
 
-    collection_name = "conversation_history"
-
-    # 1. 컬렉션 보장
-    if await QDRANT_DB.collection_exists(collection_name):
-        print(f"Qdrant 컬렉션 '{collection_name}' 이미 존재")
-    else:
-        # 임베딩 차원을 실제 임베딩 1회로 동적 감지 (모델 변경에도 대응)
-        sample_vec = await GEMINI_EMBEDDINGS.aembed_query("dimension probe")
-        dim = len(sample_vec)
-
-        await QDRANT_DB.create_collection(
-            collection_name=collection_name,
-            vectors_config={
-                "combined": VectorParams(size=dim, distance=Distance.COSINE),
-                "query":    VectorParams(size=dim, distance=Distance.COSINE),
-                "response": VectorParams(size=dim, distance=Distance.COSINE),
-            },
-        )
-        print(f"Qdrant 컬렉션 '{collection_name}' 생성 완료 (dim={dim})")
-
-    # 2. payload index 보장 (컬렉션 존재 여부와 무관하게 idempotent)
-    #    동일한 (field_name, schema)로 다시 호출해도 Qdrant는 에러 없이 무시함
-    index_specs = [
-        ("user_id",     rest.PayloadSchemaType.KEYWORD),
-        ("thread_id",   rest.PayloadSchemaType.KEYWORD),
-        ("entity_keys", rest.PayloadSchemaType.KEYWORD),
-        ("timestamp",   rest.PayloadSchemaType.FLOAT),
-    ]
-    for field_name, schema in index_specs:
-        try:
-            await QDRANT_DB.create_payload_index(
-                collection_name=collection_name,
-                field_name=field_name,
-                field_schema=schema,
-            )
-        except Exception as e:
-            print(f"[Qdrant] payload index '{field_name}' 등록 skip: {e}")
+    name = await ensure_collection()
+    print(f"Qdrant 컬렉션 '{name}' 준비 (임베딩: {EMBEDDINGS.active} — {EMBEDDINGS.info().model})")
+    embedding_index.REINDEXER.start(EMBEDDINGS.active, trigger="startup")

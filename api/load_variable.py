@@ -6,24 +6,18 @@ from qdrant_client import AsyncQdrantClient
 
 dotenv.load_dotenv()
 
-from api.llm_gateway import LiteLLMEmbeddings, ModelManager, ModelRegistry
+from api.llm_gateway import ModelManager, ModelRegistry
 
 # DB 환경변수 / DB 체크포인터·스토어 / 풀 초기화 코드 전체 제거.
 # 현재 단계 목표: 엔드포인트 + LLM + MCP 도구 연결 확인 (상태는 in-memory만).
-# 체크포인터는 main.py의 lifespan에서 MemorySaver()로 직접 생성한다.
+# 체크포인터는 main.py의 lifespan에서 SQLite(AsyncSqliteSaver, data/checkpoints.db)로 생성한다.
 
-# 임베딩 모델은 의도적으로 코드에 고정한다 (환경변수로 바꾸지 않는다).
-#
-# 이 값은 단독으로 바꿀 수 있는 설정이 아니라 Qdrant 인덱스와 한 몸이다:
-# conversation_history 컬렉션은 최초 생성 시 이 모델의 출력 차원(3072)으로 고정되고,
-# 이미 존재하는 컬렉션은 차원을 다시 감지하지 않는다(summary.py의 ensure_conversation_history_collection).
-# 따라서 차원이 다른 모델로 바꾸면(예: openai/text-embedding-3-small = 1536) 저장이 조용히 실패한다.
-# 같은 차원의 모델로 바꾸더라도 벡터 공간이 달라 기존 대화 검색 결과가 어긋난다.
-#
-# 교체하려면 코드에서 이 값을 바꾸고 scripts/reset_db.py로 컬렉션을 지워 재생성해야 한다.
-# 즉 '설정 변경'이 아니라 '재인덱싱을 동반한 마이그레이션'이므로 .env에 노출하지 않는다.
-EMBEDDING_MODEL = "gemini/gemini-embedding-001"   # 3072차원 (LiteLLM 표기)
-GEMINI_EMBEDDINGS = LiteLLMEmbeddings(model=EMBEDDING_MODEL)
+# 대화 기록 검색용 임베딩 — 사용자가 설정 화면에서 고른다 (local 기본 | ollama | gemini, api/llm_gateway/embeddings.py).
+# 방식마다 차원·벡터 공간이 달라 Qdrant 컬렉션을 따로 쓰고(EMBEDDINGS.collection()), 바꾸면 SQLite의 대화 원문으로
+# 새 컬렉션을 다시 채운다(api/chatbot/functions/embedding_index.py). 고른 값은 .env의 EMBEDDING_PROVIDER.
+from api.llm_gateway.embeddings import EmbeddingService
+from api.stack import DATA_DIR as _DATA_DIR
+EMBEDDINGS = EmbeddingService(cache_dir=_DATA_DIR / "embeddings")   # 내장(fastembed) 모델 파일 위치
 
 # Qdrant 로컬 모드: 서버 없이 앱 데이터 폴더(data/qdrant)에 바로 저장한다 (한 프로세스만 열 수 있다)
 from api.stack import QDRANT_PATH

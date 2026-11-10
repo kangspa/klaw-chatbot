@@ -18,6 +18,8 @@ import AccountCard from '../components/settings/AccountCard'
 import ApiModelsTab from '../components/settings/ApiModelsTab'
 import CustomModelsCard from '../components/settings/CustomModelsCard'
 import RuntimeCard from '../components/settings/RuntimeCard'
+import EmbeddingCard from '../components/settings/EmbeddingCard'
+import UninstallCard from '../components/settings/UninstallCard'
 import { LocalBadge, ModelSwitch, PullProgress } from '../components/settings/ModelBits'
 
 type ModelTab = ApiProvider | 'local'
@@ -32,6 +34,7 @@ const PULL_POLL_MS = 1500
  *    (components/settings/ApiModelsTab). 'Ollama' 탭은 등록된 로컬 모델의 다운로드·삭제.
  *  - 커스텀 모델: Ollama 모델명을 입력해 추가·이름 변경·삭제 (components/settings/CustomModelsCard)
  *  - 로컬 저장 공간: 서버에 받아진 모델 용량. 목록에서 빠지고 파일만 남은 모델도 여기서 지운다.
+ *  - 대화 기록 검색(임베딩): 내장·Ollama·Gemini 중 선택, 바꾸면 검색 색인 재생성 (components/settings/EmbeddingCard)
  *  - 런타임 버전: Ollama·LiteLLM 버전 변경, 둘 다 한 번에도 가능 (components/settings/RuntimeCard)
  *
  * 모델을 꺼도 백엔드 호출은 막히지 않는다 — 선택 목록을 정리하는 용도다.
@@ -301,7 +304,9 @@ export default function SettingsPage() {
         </section>
       )}
 
+      {!loading && <EmbeddingCard />}
       {!loading && <RuntimeCard onChanged={reload} />}
+      {!loading && <UninstallCard />}
     </div>
   )
 }
