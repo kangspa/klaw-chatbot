@@ -5,8 +5,8 @@ DB(사용자에게 보여줄 원문)와 Qdrant(의미 검색용 벡터)를 수�
 실행 중인 대화 상태도 함께 맞춰주지 않으면 다음 턴에서 이미 지운 메시지가
 다시 LLM 프롬프트에 들어가게 된다. 이 모듈이 그 정합성을 담당한다.
 
-주의: 현재 체크포인터는 MemorySaver(휘발성)이다. 서버를 재시작하면 state가 비므로
-      아래 함수들은 "state가 없으면 조용히 통과"하도록 작성되어 있다.
+체크포인터는 SQLite(data/checkpoints.db, AsyncSqliteSaver)라 앱을 다시 켜도 state가 남는다.
+예전 대화처럼 state가 없을 수도 있으므로 아래 함수들은 "state가 없으면 조용히 통과"하도록 작성되어 있다.
       DB/Qdrant 쪽 조작은 그와 무관하게 항상 수행된다.
 """
 
@@ -94,7 +94,7 @@ async def truncate_from(
 
     idx = _index_of(messages, from_graph_message_id)
     if idx is None:
-        # MemorySaver가 이미 오래된 메시지를 정리했거나 서버가 재시작된 경우 → 조작할 것이 없음
+        # 요약 단계가 이미 오래된 메시지를 정리했거나 state가 없는 예전 대화인 경우 → 조작할 것이 없음
         print(f"[graph] thread '{thread_id}' state에서 메시지 '{from_graph_message_id}'를 찾지 못함 (skip)")
         return False
 
@@ -160,8 +160,40 @@ async def fork_thread(
         return False
 
 
+async def prune_thread(agent, thread_id: str, keep: int = 3) -> None:
+    """
+    대화의 최근 체크포인트 keep개만 남긴다. SQLite 체크포인터는 그래프 단계마다 상태 전체를 새로 저장하므로
+    그대로 두면 DB가 계속 커진다. 앱은 최신 state만 쓴다 (되돌리기·브랜치도 최신 state 기준).
+    """
+    saver = getattr(agent, "checkpointer", None)
+    conn, lock = getattr(saver, "conn", None), getattr(saver, "lock", None)
+    if conn is None or lock is None:
+        return
+    try:
+        async with lock:
+            await conn.execute(
+                """DELETE FROM writes WHERE thread_id = ? AND checkpoint_id NOT IN (
+                       SELECT checkpoint_id FROM checkpoints WHERE thread_id = ?
+                       ORDER BY checkpoint_id DESC LIMIT ?)""", (thread_id, thread_id, keep))
+            await conn.execute(
+                """DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_id NOT IN (
+                       SELECT checkpoint_id FROM checkpoints WHERE thread_id = ?
+                       ORDER BY checkpoint_id DESC LIMIT ?)""", (thread_id, thread_id, keep))
+            await conn.commit()
+    except Exception as e:
+        print(f"[graph] 체크포인트 정리 실패(무시): {type(e).__name__}: {e}")
+
+
 async def clear_thread(agent, thread_id: str) -> None:
-    """세션 삭제 시 state의 메시지를 모두 비운다 (MemorySaver에는 thread 삭제 API가 없음)."""
+    """세션 삭제 시 그 대화의 state(체크포인트)를 모두 지운다."""
+    saver = getattr(agent, "checkpointer", None)
+    if saver is not None and hasattr(saver, "adelete_thread"):
+        try:
+            await saver.adelete_thread(thread_id)
+            print(f"[graph] thread '{thread_id}' state 삭제")
+            return
+        except Exception as e:
+            print(f"[graph] state 삭제 실패 — 메시지 비우기로 대신: {type(e).__name__}: {e}")
     values = await get_state_values(agent, thread_id)
     messages = values.get("messages", [])
     if not messages:

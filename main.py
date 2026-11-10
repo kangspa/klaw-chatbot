@@ -25,7 +25,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
-from langgraph.checkpoint.memory import MemorySaver
+import aiosqlite
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 # 자식 프로세스(법령 MCP·Ollama 엔진)를 먼저 띄운다 — 아래 api.routes → load_variable이 import 시점에
 # 법령 MCP 도구 목록을 읽기 때문이다. `import api`가 앱 폴더의 .env를 읽고 포트를 정한다 (api/__init__.py).
@@ -50,7 +51,8 @@ async def lifespan(app: FastAPI):
     # 저장소 3종 준비
     #  - SQLite   : 사용자에게 보여줄 세션/메시지 원문 (진실 원본, data/klaw.db)
     #  - Qdrant   : AI가 과거 대화를 의미 검색하기 위한 벡터 (1턴 = 1 point, 로컬 모드 data/qdrant)
-    #  - MemorySaver : LangGraph 실행 상태 (같은 thread_id 내 multi-turn 유지, 서버 재시작 시 휘발)
+    #  - SQLite 체크포인터 : LangGraph 실행 상태 (최근 메시지·턴/단기/장기 요약·엔티티 기억, data/checkpoints.db)
+    #                       앱을 껐다 켜도 이어진다. 대화마다 최근 체크포인트 몇 개만 남긴다 (graph_ops.prune_thread)
     pool = await init_pool()
     # 로그인 없이 쓰는 개인 PC용 서비스 — 로컬 사용자를 미리 만들어 둔다 (Google 계정 연결은 선택, api/auth/user_store.py)
     if pool is not None:
@@ -72,14 +74,22 @@ async def lifespan(app: FastAPI):
     await ensure_conversation_history_collection()
     # 법제처 Open API 인증 canary 확인 (실패해도 기동은 계속 — 로그로 조기 경보만)
     await preflight_law_auth()
-    checkpointer = MemorySaver()
+    checkpoint_conn = await aiosqlite.connect(str(stack.DATA_DIR / "checkpoints.db"))
+    await checkpoint_conn.execute("PRAGMA journal_mode=WAL")
+    checkpointer = AsyncSqliteSaver(checkpoint_conn)
+    await checkpointer.setup()
+    app.state.checkpoint_conn = checkpoint_conn
     app.state.chatbot_agent = build_chatbot_agent(checkpointer)
 
     yield   # ──── 앱 동작 ────
 
     # ───── shutdown ─────
-    # MemorySaver는 GC에 맡기고, DB·벡터 저장소를 닫고 자식 프로세스를 내린다.
+    # DB·대화 상태·벡터 저장소를 닫고 자식 프로세스를 내린다.
     await close_pool()
+    try:
+        await checkpoint_conn.close()
+    except Exception:
+        pass
     try:
         from api.load_variable import QDRANT_DB
         await QDRANT_DB.close()

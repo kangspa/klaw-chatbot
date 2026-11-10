@@ -99,6 +99,9 @@ async def run_agent_turn(
         # 대시보드 기록 — 답변이 실패해도 이미 발생한 비용은 남긴다
         await record_turn(user_id=user_id, session_id=session_id, turn_id=turn_id,
                           cost_cb=cb, law_cb=law_cb, state=result)
+        # SQLite 체크포인터는 단계마다 상태 전체를 쌓으므로 최근 몇 개만 남긴다
+        from api.chatbot.functions.graph_ops import prune_thread
+        await prune_thread(agent, session_id)
     print(f"Per-call breakdown: {cb.per_call}")
     print(f"Total Input: {cb.total_input} / Output: {cb.total_output}")
     print(f"Estimated cost: ${cb.total_cost:.6f}")

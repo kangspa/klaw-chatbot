@@ -4,7 +4,7 @@ SQLite 연결 및 스키마 관리.
 역할 분담:
   - Qdrant  : AI가 과거 대화를 '의미 검색'하기 위한 벡터 저장소 (turn 단위 1 point)
   - SQLite  : 사용자에게 그대로 보여줄 세션/메시지 원문 저장소 (진실 원본)
-  - LangGraph checkpointer: 현재 진행 중인 대화의 실행 상태 (MemorySaver, 휘발성)
+  - LangGraph checkpointer: 진행 중인 대화의 실행 상태 (SQLite data/checkpoints.db — 앱을 다시 켜도 남는다)
 
 세 저장소는 chat_messages.turn_id(= Qdrant point id) 와
 chat_messages.graph_message_id(= LangGraph state 상의 message id)로 서로 연결된다.
