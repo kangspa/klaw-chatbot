@@ -260,6 +260,7 @@ class DesktopApp:
         self.server = uvicorn.Server(config)
         runtime_control.register(self.server, [])
         runtime_control.register_restart(self.restart)
+        runtime_control.register_exit(self._shutdown)
         self.port = port
         self.server_thread = threading.Thread(target=lambda: asyncio.run(self.server.serve()), daemon=True)
         self.server_thread.start()
@@ -274,7 +275,9 @@ class DesktopApp:
 
 
 def main() -> int:
-    from api import litellm_overlay
+    from api import litellm_overlay, uninstall
+    if uninstall.FLAG in sys.argv:   # 앱 데이터 삭제 도우미 (앱이 끝나길 기다렸다가 지운다 — 로그 파일도 만들지 않는다)
+        return uninstall.run_helper(sys.argv[sys.argv.index(uninstall.FLAG) + 1:])
     if litellm_overlay.CHECK_FLAG in sys.argv:   # LiteLLM 새 버전 시험 모드 (앱을 띄우지 않는다)
         return litellm_overlay.run_check_mode(sys.argv[sys.argv.index(litellm_overlay.CHECK_FLAG) + 1:])
     log_path = setup_logging()

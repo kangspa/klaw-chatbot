@@ -43,6 +43,16 @@ CHILD_PORTS = {"law_mcp": ("KLAW_PORT_LAW_MCP", 39300), "ollama": ("KLAW_PORT_OL
 for _d in (HOME, DATA_DIR, RUNTIME_DIR, LOG_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
+# 라이브러리가 사용자 폴더(~/.paddlex, ~/.cache/huggingface …)나 임시 폴더에 받아 두는 캐시를 앱 폴더 안으로 돌린다
+# → 앱 폴더만 지우면 PC에 남는 것이 없다 (마이 페이지 '앱 데이터 모두 삭제', api/uninstall.py). 사용자가 직접 준 값이 우선.
+for _env, _path in {
+    "PADDLE_PDX_CACHE_HOME": DATA_DIR / "paddlex",          # PaddleOCR(PaddleX) 모델
+    "HF_HOME": DATA_DIR / "huggingface",                    # Hugging Face 다운로드
+    "MODELSCOPE_CACHE": DATA_DIR / "modelscope",            # PaddleX가 고를 수 있는 다른 모델 저장소
+    "CRAWL4_AI_BASE_DIRECTORY": DATA_DIR,                   # crawl4ai 캐시 DB (.crawl4ai)
+}.items():
+    os.environ.setdefault(_env, str(_path))
+
 
 # ────────────────────────── 포트 ──────────────────────────
 def port_free(p: int) -> bool:

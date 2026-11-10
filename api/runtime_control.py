@@ -17,6 +17,7 @@ SERVER: Optional[Any] = None       # uvicorn.Server
 LAUNCH_ARGS: list[str] = []        # 다시 띄울 때 쓸 명령 (main.py가 채운다)
 _LOOP: Optional[asyncio.AbstractEventLoop] = None
 RESTART_FN: Optional[Callable[[], None]] = None   # 데스크톱 앱 전체 재시작 (launcher가 등록)
+EXIT_FN: Optional[Callable[[], None]] = None      # 데스크톱 앱 전체 종료 — 트레이 '종료'와 같다 (launcher가 등록)
 
 
 def register(server: Any, launch_args: list[str]) -> None:
@@ -34,6 +35,19 @@ def bind_loop(loop: asyncio.AbstractEventLoop) -> None:
 def register_restart(fn: Callable[[], None]) -> None:
     global RESTART_FN
     RESTART_FN = fn
+
+
+def register_exit(fn: Callable[[], None]) -> None:
+    global EXIT_FN
+    EXIT_FN = fn
+
+
+def request_exit(delay: float = 1.5) -> None:
+    """앱 전체를 끈다 (데스크톱 앱이면 트레이까지, 개발 실행이면 서버만). 마지막 응답이 나가도록 잠시 뒤에."""
+    if EXIT_FN is not None:
+        threading.Timer(delay, EXIT_FN).start()
+    else:
+        request_shutdown(delay)
 
 
 def can_restart() -> bool:
