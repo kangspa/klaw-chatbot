@@ -2,19 +2,15 @@ import os, dotenv
 from pydantic import BaseModel
 from typing import Annotated, TypedDict, List, Dict, Optional, Any
 
-from langchain_community.utilities import SearxSearchWrapper
 from qdrant_client import AsyncQdrantClient
 
 dotenv.load_dotenv()
 
 from api.llm_gateway import LiteLLMEmbeddings, ModelManager, ModelRegistry
 
-# DB 환경변수 / Postgres 체크포인터·스토어 / 풀 초기화 코드 전체 제거.
+# DB 환경변수 / DB 체크포인터·스토어 / 풀 초기화 코드 전체 제거.
 # 현재 단계 목표: 엔드포인트 + LLM + MCP 도구 연결 확인 (상태는 in-memory만).
 # 체크포인터는 main.py의 lifespan에서 MemorySaver()로 직접 생성한다.
-
-SEARX_WRAPPER = SearxSearchWrapper(searx_host=os.getenv("SEARXNG_URL", "http://127.0.0.1:8888"))
-
 
 # 임베딩 모델은 의도적으로 코드에 고정한다 (환경변수로 바꾸지 않는다).
 #
@@ -29,12 +25,13 @@ SEARX_WRAPPER = SearxSearchWrapper(searx_host=os.getenv("SEARXNG_URL", "http://1
 EMBEDDING_MODEL = "gemini/gemini-embedding-001"   # 3072차원 (LiteLLM 표기)
 GEMINI_EMBEDDINGS = LiteLLMEmbeddings(model=EMBEDDING_MODEL)
 
-QDRANT_DB = AsyncQdrantClient(host=os.getenv("QDRANT_HOST", "127.0.0.1"), port=int(os.getenv("QDRANT_PORT", "6333")),
-                              grpc_port=int(os.getenv("QDRANT_GRPC_PORT", "6334")), prefer_grpc=True)
+# Qdrant 로컬 모드: 서버 없이 앱 데이터 폴더(data/qdrant)에 바로 저장한다 (한 프로세스만 열 수 있다)
+from api.stack import QDRANT_PATH
+QDRANT_DB = AsyncQdrantClient(path=str(QDRANT_PATH))
 
 
 # 채팅 모델은 api/llm_gateway가 '접두사/모델명'(예: 'anthropic/claude-sonnet-5')으로 생성한다.
-# 호출 가능한 모델은 Postgres(llm_models)에서 읽어 LLM_REGISTRY_TTL초(기본 30)마다
+# 호출 가능한 모델은 DB(llm_models)에서 읽어 LLM_REGISTRY_TTL초(기본 30)마다
 # 갱신하므로, DB를 고치면 서버 재시작 없이 반영된다. 모델 인스턴스는 1시간 미사용 시 해제된다.
 async def _load_models_from_db():
     from api.db import get_pool
@@ -47,7 +44,7 @@ MODEL_MANAGER = ModelManager(MODEL_REGISTRY, ttl=3600)
 
 
 # === Korean Law MCP 클라이언트 ===
-# docker compose로 띄운 korean-law-mcp 서버에 연결, 16개 도구를 LangChain Tool로 자동 변환
+# api/services.py가 자식 프로세스로 띄운 korean-law-mcp 서버에 연결, 도구를 LangChain Tool로 자동 변환
 import asyncio
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
@@ -56,7 +53,7 @@ MCP_CLIENT = MultiServerMCPClient({
         # 환경변수로 오버라이드 가능 (예: 다른 호스트/포트로 띄울 때)
         "url": os.getenv("MCP_KOREAN_LAW_URL", "http://127.0.0.1:3000/mcp"),
         "transport": "streamable_http",
-        # 서버(v4.x)는 외부 바인드 시 토큰 인증을 요구한다 (docker-compose가 같은 값을 컨테이너에 주입)
+        # 127.0.0.1에만 열리지만 같은 PC의 다른 프로그램이 쓰지 못하도록 토큰을 건다 (services가 같은 값을 넘긴다)
         "headers": {"Authorization": f"Bearer {os.getenv('MCP_AUTH_TOKEN', '')}"},
     }
 })
@@ -88,7 +85,7 @@ try:
     LAW_TOOLS = wrap_tools_with_annex_ocr(LAW_TOOLS)
 except Exception as _mcp_err:
     print(f"[MCP] Korean Law 도구 로드 실패: {_mcp_err}")
-    print("[MCP] docker가 실행 중인지, http://localhost:3000/health 가 응답하는지 확인하세요.")
+    print(f"[MCP] 법령 MCP 서버 로그를 확인하세요: logs/law-mcp.log ({os.getenv('LAW_MCP_HEALTH_URL')})")
     LAW_TOOLS = []
 
 # 안내문은 없어도 검색은 동작하므로, 실패해도 도구 로드와 별개로 빈 값으로 둔다.

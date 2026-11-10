@@ -2,7 +2,7 @@ import asyncio
 import os
 import sys
 
-from api.load_variable import MODEL_MANAGER, AgentState, SEARX_WRAPPER, GEMINI_EMBEDDINGS, QDRANT_DB
+from api.load_variable import MODEL_MANAGER, AgentState, GEMINI_EMBEDDINGS, QDRANT_DB
 from pydantic import BaseModel, Field
 from typing import Optional, List, Annotated
 from langgraph.prebuilt import InjectedState
@@ -10,27 +10,44 @@ from langchain_core.tools import InjectedToolCallId, tool
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import SystemMessage, ToolMessage
-from langchain_community.tools.searx_search.tool import SearxSearchResults
 from langgraph.types import Command
 from crawl4ai import AsyncWebCrawler, BrowserConfig
 from qdrant_client.http import models as rest
 
-search_tool = SearxSearchResults(
-    name="web_search", # 이름을 일반 검색으로 변경
-    description="실시간 뉴스, 날씨, 트렌드, 기업 정보 등 모든 웹 정보를 검색할 때 사용합니다.",
-    wrapper=SEARX_WRAPPER,
-    num_results=5
-)
+def _web_search(query: str, num_results: int = 5) -> list[dict]:
+    """
+    메타 검색(ddgs — DuckDuckGo·Bing·Brave 등 여러 엔진을 돌아가며 쓴다). 따로 띄울 검색 서버가 필요 없다.
+    결과 모양은 예전 SearXNG 도구와 같게 맞춘다: [{title, link, snippet}]
+    """
+    from ddgs import DDGS
+    # 엔진마다 그때그때 결과가 비거나 막힐 수 있어 차례로 시도한다 (auto = ddgs가 고른 여러 엔진)
+    last: Exception | None = None
+    for backend in ("auto", "yahoo", "google", "bing"):
+        try:
+            rows = DDGS(timeout=10).text(query, region="kr-kr", safesearch="moderate",
+                                         max_results=num_results, backend=backend)
+        except Exception as e:
+            last = e
+            continue
+        if rows:
+            return [{"title": r.get("title", ""), "link": r.get("href", ""), "snippet": r.get("body", "")} for r in rows]
+    if last is not None and "No results" not in str(last):
+        raise last
+    return []
+
+
 @tool
 async def web_search(query: str):
     """실시간 뉴스, 날씨, 트렌드 등 모든 웹 정보를 검색할 때 사용합니다."""
-    # .arun() 메서드를 사용하면 비동기로 실행됩니다.
-    return await search_tool.arun(query)
+    try:
+        results = await asyncio.to_thread(_web_search, query)
+    except Exception as e:
+        return f"웹 검색에 실패했습니다 ({type(e).__name__}: {e}). 잠시 후 다시 시도하거나 다른 검색어를 쓰세요."
+    return str(results) if results else "검색 결과가 없습니다."
 
 async def _crawl(url: str) -> str:
-    # 패키징된 exe는 playwright 전용 브라우저를 따로 받지 않으므로 Windows에 기본으로 있는 Edge를 쓴다
-    from api.stack import FROZEN
-    config = BrowserConfig(browser_type="chromium", channel="msedge", headless=True, verbose=False) if FROZEN else None
+    # playwright 전용 브라우저(수백 MB)를 따로 받지 않고 Windows에 기본으로 있는 Edge를 쓴다
+    config = BrowserConfig(browser_type="chromium", channel="msedge", headless=True, verbose=False) if sys.platform == "win32" else None
     async with AsyncWebCrawler(config=config, verbose=False) as crawler:
         result = await crawler.arun(url=url, bypass_cache=True)
         text = result.markdown.raw_markdown

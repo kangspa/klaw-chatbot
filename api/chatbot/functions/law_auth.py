@@ -69,7 +69,7 @@ async def preflight_law_auth() -> bool:
     try:
         res = await tool.ainvoke({"query": CANARY_QUERY})
     except Exception as e:
-        # 네트워크/서버 오류도 canary 실패로 기록 (docker가 아직 안 떴을 수 있음)
+        # 네트워크/서버 오류도 canary 실패로 기록 (법령 MCP가 아직 안 떴을 수 있음)
         _STATUS.update(ok=False, detail=f"canary 조회 호출 실패: {type(e).__name__}: {e}")
         _warn(_STATUS["detail"])
         return False

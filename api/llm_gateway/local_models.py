@@ -81,11 +81,11 @@ async def ollama_capabilities(name: str, timeout: float = 5.0) -> Optional[list[
 def friendly_pull_error(message: str, name: str) -> str:
     """Ollama 오류 문구를 사용자 안내로 바꾼다."""
     if "requires a newer version of Ollama" in message:
-        # 최신 모델은 새 Ollama가 필요하다 (레지스트리가 412로 거절). 컨테이너 Ollama 버전을 올려야 받을 수 있다.
+        # 최신 모델은 새 Ollama가 필요하다 (레지스트리가 412로 거절). 엔진 버전을 올려야 받을 수 있다.
         from api.llm_gateway.local_runtime import ollama_version
         current = ollama_version() or "알 수 없음"
         return (f"'{name}' 모델은 더 새 버전의 Ollama가 필요합니다 (서버 Ollama {current}). "
-                "docker/ollama/Dockerfile의 Ollama 버전을 올린 뒤 컨테이너를 다시 빌드하세요.")
+                "마이 페이지의 런타임 버전에서 Ollama를 새 버전으로 바꾼 뒤 다시 받으세요.")
     if name.lower().startswith(("huggingface.co/", "hf.co/")) and ("401" in message or "403" in message):
         return (f"'{name}'은 Hugging Face 승인(gated)·비공개 저장소입니다. API 키 화면의 'Ollama SSH 공개키'를 "
                 "Hugging Face 계정 > Settings > SSH and GPG keys에 등록하고, 모델 페이지에서 사용 승인을 받은 뒤 다시 추가하세요.")

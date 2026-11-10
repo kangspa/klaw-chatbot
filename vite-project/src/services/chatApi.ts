@@ -19,9 +19,9 @@ export interface ChatResult {
   response: string
   /** 이번 턴의 turn_id (= Qdrant point id) */
   turnId: string | null
-  /** Postgres에 저장된 사용자 메시지 행 (id·seq 포함) */
+  /** DB에 저장된 사용자 메시지 행 (id·seq 포함) */
   userMessage: ChatMessage | null
-  /** Postgres에 저장된 AI 메시지 행 */
+  /** DB에 저장된 AI 메시지 행 */
   assistantMessage: ChatMessage | null
   /**
    * 갱신된 세션 행. 첫 메시지를 보내면 백엔드가 그 내용으로 제목을 자동 생성하므로,
@@ -32,7 +32,7 @@ export interface ChatResult {
 
 /**
  * POST /chatbot/chat — 사용자 메시지를 보내고 AI 답변을 받는다.
- * 백엔드가 같은 요청 안에서 Postgres 2행 + Qdrant 1 point + LangGraph 상태를 함께 기록한다.
+ * 백엔드가 같은 요청 안에서 DB 2행 + Qdrant 1 point + LangGraph 상태를 함께 기록한다.
  */
 export async function sendChat(req: ChatRequest): Promise<ChatResult> {
   const data = await apiFetch<{
@@ -65,7 +65,7 @@ export interface ServerHistoryMessage {
   content: string
 }
 
-/** GET /chatbot/{sessionId}/history — 세션의 대화 기록(Postgres 우선, 없으면 체크포인터). */
+/** GET /chatbot/{sessionId}/history — 세션의 대화 기록(DB 우선, 없으면 체크포인터). */
 export async function fetchHistory(sessionId: string): Promise<ServerHistoryMessage[]> {
   try {
     const data = await apiFetch<{ messages?: ServerHistoryMessage[] }>(

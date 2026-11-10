@@ -22,7 +22,7 @@ export default function BootGate() {
         <span className="app-booting__logo" aria-hidden>⚖️</span>
         <p>백엔드 서버에 연결할 수 없습니다.</p>
         {error && <p className="app-booting__detail">{error}</p>}
-        <p className="app-booting__detail">서버(<code>uv run python main.py</code>)와 Postgres가 실행 중인지 확인하세요.</p>
+        <p className="app-booting__detail">KLaw가 실행 중인지(트레이 아이콘) 확인하세요. 개발 중이면 <code>uv run python main.py</code>.</p>
         <button className="btn btn--primary" onClick={() => void refresh()}>다시 시도</button>
       </div>
     )

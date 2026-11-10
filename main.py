@@ -1,7 +1,5 @@
 # ─── Windows asyncio 이벤트 루프 정책 ───────────────────────────
 # 반드시 다른 import보다 먼저! 이유:
-#   - Windows의 Python 3.8+ 기본 정책은 ProactorEventLoop인데
-#     psycopg(async)는 SelectorEventLoop에서만 동작 (Proactor에선 연결 불가)
 #   - 아래 from api.load_variable import 가 평가되면 그 안에서
 #     asyncio.run(MCP_CLIENT.get_tools())이 호출되면서 임시 루프를 만든다.
 #     정책 변경은 그 호출보다 앞서야 한다.
@@ -20,7 +18,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 # ──────────────────────────────────────────────────────────────────
 
-import dotenv, os
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +26,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
 from langgraph.checkpoint.memory import MemorySaver
+
+# 자식 프로세스(법령 MCP·Ollama 엔진)를 먼저 띄운다 — 아래 api.routes → load_variable이 import 시점에
+# 법령 MCP 도구 목록을 읽기 때문이다. `import api`가 앱 폴더의 .env를 읽고 포트를 정한다 (api/__init__.py).
+from api import runtime_control, services, stack
+services.start_core()
+
 from api.routes import api_router
 from api.db import close_pool, init_pool
 from api.llm_gateway.local_runtime import report_local_runtime
@@ -36,11 +40,7 @@ from api.load_variable import MODEL_REGISTRY
 from api.chatbot.functions.agent import build_chatbot_agent
 from api.chatbot.functions.law_auth import preflight_law_auth
 from api.chatbot.functions.summary import ensure_conversation_history_collection
-from api import runtime_control, stack
 from api.auth.user_store import ensure_local_user
-
-# .env 파일에서 환경 변수 로드
-dotenv.load_dotenv(stack.HOME / ".env")   # 스택 위치의 .env (개발: 저장소 / exe: %LOCALAPPDATA%/KLaw)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -48,8 +48,8 @@ async def lifespan(app: FastAPI):
     # 마이 페이지의 LiteLLM 버전 변경이 다른 스레드에서 서버 종료를 요청할 수 있도록 루프를 등록한다
     runtime_control.bind_loop(asyncio.get_running_loop())
     # 저장소 3종 준비
-    #  - Postgres : 사용자에게 보여줄 세션/메시지 원문 (진실 원본)
-    #  - Qdrant   : AI가 과거 대화를 의미 검색하기 위한 벡터 (1턴 = 1 point)
+    #  - SQLite   : 사용자에게 보여줄 세션/메시지 원문 (진실 원본, data/klaw.db)
+    #  - Qdrant   : AI가 과거 대화를 의미 검색하기 위한 벡터 (1턴 = 1 point, 로컬 모드 data/qdrant)
     #  - MemorySaver : LangGraph 실행 상태 (같은 thread_id 내 multi-turn 유지, 서버 재시작 시 휘발)
     pool = await init_pool()
     # 로그인 없이 쓰는 개인 PC용 서비스 — 로컬 사용자를 미리 만들어 둔다 (Google 계정 연결은 선택, api/auth/user_store.py)
@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[llm_gateway] 모델 초기 데이터 등록 실패: {type(e).__name__}: {e}")
         await MODEL_REGISTRY.refresh(force=True)
-        # 로컬 모델(Ollama 컨테이너) 읽기 전용 점검: 미기동·모델 누락·CPU 동작 여부를 로그로 알린다
+        # 로컬 모델(Ollama 엔진) 읽기 전용 점검: 미기동·모델 누락·CPU 동작 여부를 로그로 알린다
         local_ids = [s.id for s in await MODEL_REGISTRY.list_enabled() if s.id.startswith("ollama/")]
         await asyncio.to_thread(report_local_runtime, local_ids)
     await ensure_conversation_history_collection()
@@ -78,8 +78,14 @@ async def lifespan(app: FastAPI):
     yield   # ──── 앱 동작 ────
 
     # ───── shutdown ─────
-    # MemorySaver는 GC에 맡기고, Postgres 풀만 명시적으로 닫는다.
+    # MemorySaver는 GC에 맡기고, DB·벡터 저장소를 닫고 자식 프로세스를 내린다.
     await close_pool()
+    try:
+        from api.load_variable import QDRANT_DB
+        await QDRANT_DB.close()
+    except Exception:
+        pass
+    await asyncio.to_thread(services.stop_all)
 
 # --- FastAPI 앱 초기화 ---
 app = FastAPI(
@@ -91,15 +97,6 @@ app = FastAPI(
 
 # --- 라우터 포함 ---
 app.include_router(api_router)
-
-os.makedirs("templates", exist_ok=True)
-os.makedirs("data", exist_ok=True)
-os.makedirs("static", exist_ok=True)
-
-# --- 정적 파일 마운트 ---
-app.mount("/templates", StaticFiles(directory="templates"), name="templates")
-app.mount("/data", StaticFiles(directory="data"), name="data")
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- CORS 미들웨어 추가 ---
 # 모든 출처, 메소드, 헤더에 대해 요청을 허용합니다.
@@ -113,9 +110,9 @@ app.add_middleware(
 
 # --- 웹 UI (프론트 빌드) ---
 # exe·운영에서는 Vite 개발 서버 없이 이 서버가 빌드된 화면을 같은 주소·포트로 내준다 (API와 같은 출처라 프록시·CORS 불필요).
-# 개발 중에는 vite-project/dist가 없으면 예전처럼 templates/index.html을 쓴다 (Vite 개발 서버는 5173에서 따로 뜬다).
+# 개발 중에 vite-project/dist가 없으면 API만 연다 (화면은 Vite 개발 서버 5173에서 따로 뜬다).
 FRONTEND_DIST = stack.BUNDLE / ("frontend" if stack.FROZEN else "vite-project/dist")
-_API_PREFIXES = ("auth/", "chatbot/", "docs", "redoc", "openapi.json", "templates/", "data/", "static/")
+_API_PREFIXES = ("auth/", "chatbot/", "docs", "redoc", "openapi.json")
 
 if (FRONTEND_DIST / "index.html").exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="frontend-assets")
@@ -129,10 +126,6 @@ if (FRONTEND_DIST / "index.html").exists():
         if full_path and target.is_file() and FRONTEND_DIST.resolve() in target.parents:
             return FileResponse(target)   # favicon.svg 등 dist 루트 파일
         return FileResponse(FRONTEND_DIST / "index.html")
-else:
-    @app.get("/")
-    async def read_index():
-        return FileResponse('templates/index.html')
 
 if __name__ == "__main__":
     # uvicorn.run() 우회 이유:
@@ -145,7 +138,7 @@ if __name__ == "__main__":
     config = uvicorn.Config(
         "main:app",
         host=os.getenv("KLAW_HOST", "127.0.0.1"),
-        port=stack.port(stack.WEB_PORT_ENV),
+        port=stack.ensure_web_port(),
         reload=False,
     )
     server = uvicorn.Server(config)

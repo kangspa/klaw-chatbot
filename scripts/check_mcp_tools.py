@@ -27,6 +27,7 @@ from pathlib import Path
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import dotenv  # noqa: E402
 from langchain_mcp_adapters.client import MultiServerMCPClient  # noqa: E402
 
@@ -41,7 +42,10 @@ REQUIRED_MARKERS = ["[NOT_FOUND]", "재시도 제안", "이미지 기반 PDF"]
 
 
 async def fetch_tools() -> dict:
-    dotenv.load_dotenv(PROJECT_ROOT / ".env")
+    # 앱과 같은 방법으로 법령 MCP를 자식 프로세스로 띄운다 (스크립트가 끝나면 함께 내려간다)
+    from api import services
+    if not await asyncio.to_thread(services.LAW_MCP.start):
+        raise RuntimeError(f"법령 MCP가 시작되지 않았습니다 (로그: {services.LAW_MCP.log_path})")
     token = os.getenv("MCP_AUTH_TOKEN", "")
     client = MultiServerMCPClient({"korean_law": {
         "url": os.getenv("MCP_KOREAN_LAW_URL", "http://localhost:3000/mcp"),
@@ -119,7 +123,7 @@ async def main() -> int:
         tools = await fetch_tools()
     except Exception as e:
         print(f"MCP 서버에 연결하지 못했습니다: {type(e).__name__}: {e}")
-        print("docker compose up -d --build korean-law-mcp 후 다시 실행하세요.")
+        print("korean-law-mcp를 빌드했는지 확인하세요: cd korean-law-mcp && npm ci --omit=optional --ignore-scripts && npm run build")
         return 2
 
     version = submodule_version()

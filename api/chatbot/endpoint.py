@@ -34,8 +34,8 @@ class PlanChatRequest(BaseModel):
 class PlanChatResponse(BaseModel):
     response: str = Field(..., description="AI 응답 메시지")
     turnId: Optional[str] = Field(default=None, description="이번 턴의 turn_id (= Qdrant point id)")
-    userMessage: Optional[dict[str, Any]] = Field(default=None, description="Postgres에 저장된 사용자 메시지 행")
-    assistantMessage: Optional[dict[str, Any]] = Field(default=None, description="Postgres에 저장된 AI 메시지 행")
+    userMessage: Optional[dict[str, Any]] = Field(default=None, description="DB에 저장된 사용자 메시지 행")
+    assistantMessage: Optional[dict[str, Any]] = Field(default=None, description="DB에 저장된 AI 메시지 행")
     session: Optional[dict[str, Any]] = Field(
         default=None,
         description="갱신된 세션 행. 첫 메시지로 제목이 자동 생성되므로 프론트가 이 값으로 목록을 동기화한다.",
@@ -54,7 +54,7 @@ async def post_plan_chat(
     """
     사용자 메시지를 받아 에이전트를 1턴 실행하고, 결과를 세 저장소에 함께 기록하는 End-point
 
-      - Postgres : 화면에 보여줄 대화 원문 (user/assistant 메시지 2행, 같은 turn_id)
+      - DB : 화면에 보여줄 대화 원문 (user/assistant 메시지 2행, 같은 turn_id)
       - Qdrant   : 의미 검색용 벡터 (turn_id를 point id로 사용, 1턴 = 1 point)
       - LangGraph: 실행 상태(체크포인트)
 
@@ -65,8 +65,8 @@ async def post_plan_chat(
     user_id = current_user["id"]
 
     # 이번 턴의 식별자들을 미리 만들어둔다.
-    #  - turn_id: Qdrant point id 이자 Postgres의 turn 키
-    #  - *_message_id: Postgres PK 이자 LangGraph state의 message id
+    #  - turn_id: Qdrant point id 이자 DB의 turn 키
+    #  - *_message_id: DB PK 이자 LangGraph state의 message id
     turn_id = session_store.new_id()
     user_message_id = session_store.new_id()
     assistant_message_id = session_store.new_id()
@@ -98,7 +98,7 @@ async def post_plan_chat(
         detail = describe_exception(e)
         raise HTTPException(status_code=500, detail=f"에이전트 호출 중 오류가 발생했습니다: {detail}")
 
-    # Postgres 기록 (실패해도 이미 생성된 답변은 그대로 반환한다)
+    # DB 기록 (실패해도 이미 생성된 답변은 그대로 반환한다)
     saved: dict[str, Any] = {}
     if db_is_ready():
         try:
@@ -116,7 +116,7 @@ async def post_plan_chat(
             # 대시보드용 세션 요약을 백그라운드에서 갱신 (응답은 기다리지 않는다)
             schedule_session_summary(user_id=user_id, session_id=data.sessionId, turn_id=turn_id)
         except Exception as e:
-            print(f"[Postgres] 대화 저장 실패(무시): {type(e).__name__}: {e}")
+            print(f"[DB] 대화 저장 실패(무시): {type(e).__name__}: {e}")
 
     return PlanChatResponse(
         response=answer,
@@ -136,7 +136,7 @@ async def get_draft_history(
     """
     특정 세션의 대화 기록을 조회하는 End-point.
 
-    Postgres가 준비되어 있으면 그쪽(사용자에게 보여줄 원문)을 우선 사용하고,
+    DB가 준비되어 있으면 그쪽(사용자에게 보여줄 원문)을 우선 사용하고,
     없을 때만 LangGraph 체크포인트에서 읽는다.
     """
     session = await session_store.get_session(sessionId)
@@ -149,7 +149,7 @@ async def get_draft_history(
             if messages:
                 return {"messages": [{"role": m["role"], "content": m["content"]} for m in messages]}
         except Exception as e:
-            print(f"[Postgres] 히스토리 조회 실패(체크포인터로 폴백): {type(e).__name__}: {e}")
+            print(f"[DB] 히스토리 조회 실패(체크포인터로 폴백): {type(e).__name__}: {e}")
 
     chatbot_agent = request.app.state.chatbot_agent
     config = {"configurable": {"thread_id": sessionId}}

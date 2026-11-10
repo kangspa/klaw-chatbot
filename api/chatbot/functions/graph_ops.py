@@ -1,13 +1,13 @@
 """
 LangGraph 체크포인트(thread state) 조작 유틸.
 
-Postgres(사용자에게 보여줄 원문)와 Qdrant(의미 검색용 벡터)를 수정할 때,
+DB(사용자에게 보여줄 원문)와 Qdrant(의미 검색용 벡터)를 수정할 때,
 실행 중인 대화 상태도 함께 맞춰주지 않으면 다음 턴에서 이미 지운 메시지가
 다시 LLM 프롬프트에 들어가게 된다. 이 모듈이 그 정합성을 담당한다.
 
 주의: 현재 체크포인터는 MemorySaver(휘발성)이다. 서버를 재시작하면 state가 비므로
       아래 함수들은 "state가 없으면 조용히 통과"하도록 작성되어 있다.
-      Postgres/Qdrant 쪽 조작은 그와 무관하게 항상 수행된다.
+      DB/Qdrant 쪽 조작은 그와 무관하게 항상 수행된다.
 """
 
 from typing import Any, Optional
@@ -129,7 +129,7 @@ async def fork_thread(
     """
     브랜치 생성: src thread의 state를 upto_graph_message_id(포함)까지 잘라 dst thread로 복사한다.
 
-    - 메시지 객체를 그대로 복사하므로 id가 보존된다 → Postgres의 graph_message_id가 그대로 유효.
+    - 메시지 객체를 그대로 복사하므로 id가 보존된다 → DB의 graph_message_id가 그대로 유효.
     - dst thread는 비어 있으므로 add_messages 리듀서가 순서대로 append 한다.
     - 요약/엔티티 등 파생 메모리도 함께 복사해 브랜치가 같은 맥락에서 이어지도록 한다.
     """

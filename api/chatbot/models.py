@@ -114,7 +114,7 @@ async def _registered(model_id: str):
 
 
 def _ensure_not_upgrading() -> None:
-    """Ollama 버전을 바꾸는 동안에는 컨테이너가 내려갔다 올라오므로 다운로드·삭제를 받지 않는다."""
+    """Ollama 버전을 바꾸는 동안에는 엔진이 내려갔다 올라오므로 다운로드·삭제를 받지 않는다."""
     from api.llm_gateway.ollama_upgrade import UPGRADER
     if UPGRADER.running:
         raise HTTPException(status_code=409, detail="로컬 모델 서버(Ollama) 버전을 바꾸는 중입니다. 완료된 뒤 다시 시도하세요.")
@@ -163,7 +163,7 @@ async def list_models(current_user: dict[str, Any] = Depends(get_current_user)):
 async def set_preference(data: PreferenceRequest, current_user: dict[str, Any] = Depends(get_current_user)):
     """모델 사용/사용 안 함 저장. 선택 목록 표시용이며 호출 제한은 하지 않는다."""
     if not db_is_ready():
-        raise HTTPException(status_code=503, detail="Postgres에 연결되어 있지 않아 설정을 저장할 수 없습니다.")
+        raise HTTPException(status_code=503, detail="DB에 연결되어 있지 않아 설정을 저장할 수 없습니다.")
     await _registered(data.modelId)
     await model_prefs.set_model_enabled(current_user["id"], data.modelId, data.enabled)
 
@@ -179,7 +179,9 @@ async def start_pull(data: PullRequest, current_user: dict[str, Any] = Depends(g
     if ollama_name(data.modelId) is None:
         raise HTTPException(status_code=400, detail="이 모델은 서버에서 다운로드할 수 없습니다 (Ollama 모델만 지원).")
     if await installed_ollama_models() is None:
-        raise HTTPException(status_code=503, detail="로컬 모델 서버(Ollama)에 연결할 수 없습니다. `docker compose up -d ollama`를 확인하세요.")
+        from api import services
+        if not await asyncio.to_thread(services.ensure_ollama):
+            raise HTTPException(status_code=503, detail=services.ollama_unavailable_message())
     print(f"[local_models] 다운로드 시작: {data.modelId} (요청: {current_user.get('email')})")
     return {"modelId": data.modelId, **PULL_MANAGER.start(data.modelId).to_dict()}
 
@@ -256,7 +258,7 @@ async def delete_local_model(data: DeleteRequest, current_user: dict[str, Any] =
 # ────────────────────────── 커스텀 모델 ──────────────────────────
 def _require_db() -> None:
     if not db_is_ready():
-        raise HTTPException(status_code=503, detail="Postgres에 연결되어 있지 않아 커스텀 모델을 관리할 수 없습니다.")
+        raise HTTPException(status_code=503, detail="DB에 연결되어 있지 않아 커스텀 모델을 관리할 수 없습니다.")
 
 
 async def _custom_spec(model_id: str):
@@ -294,7 +296,9 @@ async def add_custom(data: CustomAddRequest, current_user: dict[str, Any] = Depe
     if any(s.id == model_id for s in await MODEL_REGISTRY.list_all()):
         raise HTTPException(status_code=409, detail=f"이미 목록에 있는 모델입니다: {name}")
     if await installed_ollama_models() is None:
-        raise HTTPException(status_code=503, detail="로컬 모델 서버(Ollama)에 연결할 수 없습니다. `docker compose up -d ollama`를 확인하세요.")
+        from api import services
+        if not await asyncio.to_thread(services.ensure_ollama):
+            raise HTTPException(status_code=503, detail=services.ollama_unavailable_message())
 
     PULL_MANAGER.start(model_id)
     state = await PULL_MANAGER.wait_started(model_id)

@@ -5,6 +5,9 @@
   POST /chatbot/runtime/update          {ollama?, litellm?} 버전 변경 시작 — 둘 다 주면 한 번에 바꾼다
   GET  /chatbot/runtime/update          진행 상태·로그 (프론트가 주기적으로 조회. LiteLLM 적용 중엔 서버가 잠시 내려간다)
   POST /chatbot/runtime/litellm/check   {version} 해당 LiteLLM 버전의 호환성 확인 (별도 가상환경, 결과 캐시)
+  POST /chatbot/runtime/ollama/remove   {includeModels} Ollama 엔진(과 받은 모델)을 지워 디스크를 비운다
+
+Ollama 엔진은 exe에 넣지 않고(1.6GB) 처음 쓸 때 '설치'(= 같은 버전 변경 흐름)로 받는다.
 
 개인 PC에서 띄워 쓰는 서비스라 별도 권한 확인 없이 실행한다.
 """
@@ -14,7 +17,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import runtime_control
+from api import runtime_control, services
 from api.auth.deps import get_current_user
 from api.llm_gateway import litellm_upgrade as lu
 from api.llm_gateway import local_runtime as lr
@@ -37,6 +40,10 @@ class CheckRequest(BaseModel):
     version: str
 
 
+class RemoveEngineRequest(BaseModel):
+    includeModels: bool = False
+
+
 async def _api_model_ids() -> list[str]:
     """LiteLLM 호환성 확인에 쓸 등록 API 모델 (로컬 모델은 단가 계산 대상이 아니다)."""
     return [s.id for s in await MODEL_REGISTRY.list_all() if split_model_id(s.id)[0] not in LOCAL_PROVIDERS]
@@ -51,8 +58,14 @@ async def _ollama_status() -> dict:
     except Exception as e:
         error = f"GitHub에서 Ollama 릴리스 목록을 받지 못했습니다: {type(e).__name__}"
     latest = releases[0]["version"] if releases else None
+    installed = services.current_engine_version()
+    usage = await asyncio.to_thread(ou.engine_disk_usage)
     return {
-        "current": running,                                  # None이면 Ollama에 연결할 수 없음
+        "current": running,                                  # None이면 엔진이 없거나 아직 시작 중
+        "installed": installed,                              # 받아 둔 엔진 버전 (None이면 아직 설치 안 함)
+        "starting": bool(installed and not running),
+        "engineBytes": usage["engine"],
+        "modelsBytes": usage["models"],
         "configured": ou.configured_version(),
         "latest": latest,
         "updateAvailable": bool(running and latest and ou.version_key(latest) > ou.version_key(running)),
@@ -164,3 +177,17 @@ async def check_litellm(data: CheckRequest):
     if not lu.VERSION_RE.match(version):
         raise HTTPException(status_code=400, detail=f"버전 형식이 아닙니다: {data.version}")
     return {"version": version, **await asyncio.to_thread(lu.check_compat, version, await _api_model_ids())}
+
+
+@router.post("/ollama/remove")
+async def remove_ollama_engine(data: RemoveEngineRequest):
+    if RUNTIME_UPDATER.running or ou.UPGRADER.running:
+        raise HTTPException(status_code=409, detail="버전을 바꾸는 중에는 지울 수 없습니다.")
+    if any(p["status"] == "pulling" for p in PULL_MANAGER.snapshot().values()):
+        raise HTTPException(status_code=409, detail="모델을 다운로드하는 중에는 지울 수 없습니다.")
+    try:
+        freed = await asyncio.to_thread(ou.remove_engine, data.includeModels)
+    except ou.UpgradeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    print(f"[runtime] Ollama 엔진{'·모델' if data.includeModels else ''} 삭제: {freed / 1e9:.2f}GB")
+    return {"freedBytes": freed}

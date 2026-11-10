@@ -27,7 +27,7 @@ export interface ChatMessage {
   /**
    * 대화 1턴(질문 + 답변)의 식별자. Qdrant의 벡터 point id와 동일한 값이며
    * 같은 턴의 user/assistant 메시지가 이 값을 공유한다.
-   * 삭제·브랜치·재생성이 Postgres와 Qdrant에서 같은 범위로 적용되는 근거.
+   * 삭제·브랜치·재생성이 DB와 Qdrant에서 같은 범위로 적용되는 근거.
    */
   turnId?: string | null
   createdAt: string   // ISO8601

@@ -58,3 +58,6 @@ docker-compose.override.yml
 
 # 런타임 버전 변경 진행 상태·백업 (마이 페이지 > 런타임 버전)
 .runtime/
+
+# 앱 데이터 (SQLite DB·Qdrant 로컬·Ollama 엔진/모델) — api/stack.py DATA_DIR
+/data/

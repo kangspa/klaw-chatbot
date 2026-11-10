@@ -2,10 +2,10 @@ import type { ChatMessage, Session, SessionSummary } from '../types'
 import { apiFetch } from './http'
 
 /**
- * 세션/메시지 저장소 클라이언트 (백엔드 Postgres 연동).
+ * 세션/메시지 저장소 클라이언트 (백엔드 DB 연동).
  *
- * 이전 버전은 localStorage 목업이었지만, 이제 대화 원문의 진실 원본은 Postgres다.
- * 백엔드는 하나의 요청으로 Postgres(원문) · Qdrant(벡터) · LangGraph 상태를
+ * 이전 버전은 localStorage 목업이었지만, 이제 대화 원문의 진실 원본은 DB다.
+ * 백엔드는 하나의 요청으로 DB(원문) · Qdrant(벡터) · LangGraph 상태를
  * 동시에 맞춰주므로, 프론트는 응답으로 받은 최신 목록을 그대로 반영하기만 하면 된다.
  */
 
@@ -35,7 +35,7 @@ export async function renameSession(id: string, title: string): Promise<Session>
   })
 }
 
-/** 세션 삭제: Postgres 행 + Qdrant의 해당 thread 벡터 + LangGraph 상태를 모두 정리한다. */
+/** 세션 삭제: DB 행 + Qdrant의 해당 thread 벡터 + LangGraph 상태를 모두 정리한다. */
 export async function deleteSession(id: string): Promise<void> {
   await apiFetch<{ deleted: boolean }>(`${BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }

@@ -8,13 +8,12 @@ API 키 관리 End-point (/chatbot/keys/...) — 사용자가 화면에서 키�
   OpenAI·Gemini·Anthropic  LiteLLM이 호출할 때마다 환경 변수를 읽는다 → 바로 적용
   Hugging Face (HF_TOKEN)  모델 '다운로드' 인증용 (huggingface_hub — 예: OCR 모델). 받을 때마다 읽는다 → 바로 적용.
                            모델 호출에는 쓰지 않는다 (HF 클라우드 추론은 지원하지 않음)
-  LAW_OC                   korean-law-mcp 컨테이너가 시작할 때 읽는다 → 컨테이너를 다시 만들고 인증을 확인한다
+  LAW_OC                   법령 MCP 서버(자식 프로세스)가 시작할 때 읽는다 → 서버를 다시 띄우고 인증을 확인한다
 Ollama는 로컬 모델만 쓰므로 키가 없다. 대신 Ollama가 Hugging Face의 승인·비공개 저장소(hf.co/…)를 받을 때 쓰는
-컨테이너 SSH 공개키를 보여준다 (HF 계정 > SSH keys에 등록 — HF_TOKEN으로는 인증되지 않는다).
+Ollama 엔진의 SSH 공개키를 보여준다 (HF 계정 > SSH keys에 등록 — HF_TOKEN으로는 인증되지 않는다).
 """
 import asyncio
 import os
-import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,7 +25,7 @@ from pydantic import BaseModel, Field
 
 from api.auth.deps import get_current_user
 from api.env_store import read_env_file, remove_env_keys, rename_env_key, write_env_values
-from api.stack import HOME as STACK_HOME, compose_cmd
+from api import services
 
 router = APIRouter(prefix="/keys", dependencies=[Depends(get_current_user)])
 
@@ -50,14 +49,14 @@ KEYS: list[KeySpec] = [
     KeySpec("HUGGINGFACE", "Hugging Face", "HF_TOKEN", ("HUGGING_FACE_HUB_TOKEN", "HUGGINGFACEHUB_API_TOKEN"),
             "모델 다운로드 인증 — 승인(gated)·비공개 저장소에서 받을 때 (예: 법령 별표 OCR 모델). 모델 호출에는 쓰지 않습니다",
             "immediate"),
-    # docker-compose가 LAW_OC 없이는 korean-law-mcp를 띄우지 않으므로(필수 값) 지울 수 없고 바꾸기만 한다
+    # 법령 검색의 필수 값이라 지울 수 없고 바꾸기만 한다
     KeySpec("LAW_OC", "법제처 Open API (LAW_OC)", "LAW_OC", (),
             "법령·판례 검색(korean-law-mcp)의 법제처 인증값. 바꾸면 법령 검색 서버를 다시 시작합니다", "restart_law",
             deletable=False),
 ]
 _BY_ID = {k.id: k for k in KEYS}
 
-# LAW_OC 적용(컨테이너 재생성 + 인증 확인) 진행 상태
+# LAW_OC 적용(서버 재시작 + 인증 확인) 진행 상태
 _law_apply: dict = {"status": None, "message": "", "at": None}
 
 
@@ -108,27 +107,14 @@ def _spec(key_id: str) -> KeySpec:
 
 
 def _restart_law_mcp() -> None:
-    """LAW_OC를 새 값으로 쓰도록 korean-law-mcp 컨테이너를 다시 만든 뒤 법제처 인증을 확인한다 (백그라운드)."""
+    """LAW_OC를 새 값으로 쓰도록 법령 MCP 서버(자식 프로세스)를 다시 띄운 뒤 법제처 인증을 확인한다 (백그라운드)."""
     _law_apply.update(status="running", message="법령 검색 서버를 다시 시작하는 중", at=time.time())
 
     async def run() -> None:
         try:
-            out = await asyncio.to_thread(
-                subprocess.run, compose_cmd("up", "-d", "--force-recreate", "korean-law-mcp"),
-                cwd=STACK_HOME, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
-                env={**os.environ},
-            )
-            if out.returncode != 0:
-                raise RuntimeError((out.stderr or out.stdout).strip().splitlines()[-1][:200])
-            # 컨테이너가 응답할 때까지 기다린 뒤 canary 검색으로 인증 확인
-            async with httpx.AsyncClient(timeout=3) as client:
-                for _ in range(40):
-                    try:
-                        if (await client.get(os.getenv("LAW_MCP_HEALTH_URL", "http://127.0.0.1:3000/health"))).status_code == 200:
-                            break
-                    except Exception:
-                        pass
-                    await asyncio.sleep(1.5)
+            # 자식 프로세스를 다시 띄운다 (LAW_OC는 시작할 때 환경 변수로 넘긴다). 응답할 때까지 기다린다.
+            if not await asyncio.to_thread(services.LAW_MCP.restart):
+                raise RuntimeError(f"서버가 응답하지 않습니다 (로그: {services.LAW_MCP.log_path})")
             from api.chatbot.functions.law_auth import auth_status, preflight_law_auth
             ok = await preflight_law_auth()
             _law_apply.update(status="done" if ok else "error",
@@ -210,18 +196,15 @@ async def test_key(data: KeyIdRequest):
 @router.get("/ollama-ssh")
 async def ollama_ssh_key():
     """
-    Ollama 컨테이너의 SSH 공개키. Hugging Face 계정(Settings > SSH and GPG keys)에 등록하면 Ollama가
-    승인(gated)·비공개 hf.co/… 저장소의 GGUF를 받을 수 있다. 공개키라 보여줘도 안전하다 (개인키는 컨테이너 안에만 있다).
+    Ollama 엔진의 SSH 공개키 (data/ollama/home/.ollama — 엔진이 처음 실행될 때 만든다). Hugging Face 계정(Settings > SSH and GPG keys)에 등록하면 Ollama가
+    승인(gated)·비공개 hf.co/… 저장소의 GGUF를 받을 수 있다. 공개키라 보여줘도 안전하다 (개인키는 앱 데이터 폴더에만 있다).
     """
-    from api.llm_gateway.local_runtime import ollama_container
+    key_file = services.OLLAMA_HOME / ".ollama" / "id_ed25519.pub"
     try:
-        out = await asyncio.to_thread(
-            subprocess.run, ["docker", "exec", ollama_container(), "cat", "/root/.ollama/id_ed25519.pub"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except Exception:
-        return {"available": False, "publicKey": None, "message": "docker 명령을 실행할 수 없습니다."}
-    key = out.stdout.strip()
-    if out.returncode != 0 or not key.startswith("ssh-"):
-        return {"available": False, "publicKey": None, "message": "Ollama 컨테이너가 실행 중이 아니거나 키가 아직 없습니다."}
+        key = key_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        key = ""
+    if not key.startswith("ssh-"):
+        return {"available": False, "publicKey": None,
+                "message": "Ollama 엔진을 설치해 한 번 실행하면 키가 만들어집니다."}
     return {"available": True, "publicKey": key, "message": ""}

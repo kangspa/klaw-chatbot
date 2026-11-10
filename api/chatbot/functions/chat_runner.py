@@ -6,6 +6,7 @@
 configurable.turn_id 를 내려주므로 Qdrant point가 같은 규칙으로 기록/덮어쓰기 된다.
 """
 
+import asyncio
 import traceback
 from typing import Optional
 
@@ -42,9 +43,11 @@ async def resolve_model(model: Optional[str]) -> str:
             )
         installed = await installed_ollama_models()
         if installed is None:
-            raise ModelNotAvailableError(
-                "로컬 모델 서버(Ollama)에 연결할 수 없습니다. 컨테이너가 실행 중인지 확인하세요."
-            )
+            from api import services
+            if await asyncio.to_thread(services.ensure_ollama):
+                installed = await installed_ollama_models()
+            if installed is None:
+                raise ModelNotAvailableError(services.ollama_unavailable_message())
         if not is_installed(name, installed):
             raise ModelNotAvailableError(
                 f"로컬 모델 '{spec.label}'이 아직 다운로드되지 않았습니다. 마이 페이지 > 모델 설정에서 다운로드하세요."
@@ -68,7 +71,7 @@ async def run_agent_turn(
 
     user_graph_message_id: HumanMessage에 직접 부여할 id.
       LangGraph의 add_messages 리듀서는 id가 이미 있으면 그대로 유지하므로,
-      Postgres의 chat_messages.graph_message_id 와 state 상의 메시지를 1:1로 묶어둘 수 있다.
+      DB의 chat_messages.graph_message_id 와 state 상의 메시지를 1:1로 묶어둘 수 있다.
       → 나중에 삭제/재생성 시 state에서 정확히 어느 지점부터 잘라낼지 알 수 있다.
     """
     config = {
@@ -77,7 +80,7 @@ async def run_agent_turn(
             "thread_id": session_id,
             "isotime": isotime,
             "model": model,
-            # save_conversation이 Qdrant point id로 사용 (= Postgres chat_messages.turn_id)
+            # save_conversation이 Qdrant point id로 사용 (= DB chat_messages.turn_id)
             "turn_id": turn_id,
         }
     }

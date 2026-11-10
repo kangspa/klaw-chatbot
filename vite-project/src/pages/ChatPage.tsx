@@ -115,7 +115,7 @@ export default function ChatPage() {
 
     try {
       const result = await sendChat({ sessionId, message: text, model: model || undefined })
-      // 서버가 Postgres에 저장한 실제 행(id/seq/turnId 포함)으로 교체한다.
+      // 서버가 DB에 저장한 실제 행(id/seq/turnId 포함)으로 교체한다.
       // 이 id들이 있어야 삭제/브랜치/재생성 버튼이 동작한다.
       // 첫 메시지면 백엔드가 세션 제목도 자동 생성하므로 result.session으로 함께 반영한다.
       if (result.userMessage && result.assistantMessage) {
@@ -129,14 +129,14 @@ export default function ChatPage() {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : '응답을 받지 못했습니다.'
-      setError(`${msg}\n백엔드 서버(uv run main.py)와 Postgres 컨테이너가 실행 중인지 확인해주세요.`)
+      setError(`${msg}\nKLaw(백엔드 서버)가 실행 중인지 확인해주세요.`)
     } finally {
       setPending(null)
       setSending(false)
     }
   }
 
-  /** ① 삭제 — 이 답변과 짝이 되는 질문을 Postgres·Qdrant·대화 상태에서 모두 제거 */
+  /** ① 삭제 — 이 답변과 짝이 되는 질문을 DB·Qdrant·대화 상태에서 모두 제거 */
   const handleDelete = async (message: ChatMessage) => {
     if (isBusy) return
     const confirmText = message.turnId

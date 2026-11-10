@@ -2,14 +2,14 @@
 Qdrant conversation_history 컬렉션 조작 유틸.
 
 conversation_history의 point 1개 = 대화 1턴(사용자 질문 + AI 답변)이며
-point id는 Postgres chat_messages.turn_id 와 동일하다(= UUID).
+point id는 DB chat_messages.turn_id 와 동일하다(= UUID).
 
 이 대응 덕분에:
   - 메시지 삭제   → 해당 turn_id의 point 삭제
   - 메시지 재생성 → 같은 turn_id로 upsert (덮어쓰기, save_conversation이 수행)
   - 브랜치 생성   → 원본 point들을 새 id + 새 thread_id로 복제
 
-가 Postgres와 완전히 동일한 범위로 적용된다.
+가 DB와 완전히 동일한 범위로 적용된다.
 """
 
 from typing import Iterable
@@ -35,7 +35,7 @@ async def delete_points(point_ids: Iterable[str]) -> int:
         )
         print(f"[Qdrant] point {len(ids)}개 삭제: {ids}")
     except Exception as e:
-        # 대화 원문(Postgres)이 이미 지워졌다면 벡터가 남아도 치명적이지 않으므로 best-effort
+        # 대화 원문(DB)이 이미 지워졌다면 벡터가 남아도 치명적이지 않으므로 best-effort
         print(f"[Qdrant] point 삭제 실패(무시): {type(e).__name__}: {e}")
     return len(ids)
 

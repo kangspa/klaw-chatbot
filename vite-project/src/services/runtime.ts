@@ -16,8 +16,14 @@ export interface Release {
 }
 
 export interface OllamaRuntime {
-  /** 실행 중인 버전. null이면 연결할 수 없음 */
+  /** 실행 중인 버전. null이면 엔진이 없거나 아직 시작 중 */
   current: string | null
+  /** 받아 둔 엔진 버전. null이면 아직 설치하지 않음 (exe에 넣지 않고 처음 쓸 때 받는다) */
+  installed: string | null
+  /** 엔진은 있는데 아직 응답하지 않음 */
+  starting: boolean
+  engineBytes: number
+  modelsBytes: number
   configured: string
   latest: string | null
   updateAvailable: boolean
@@ -82,4 +88,9 @@ export async function getRuntimeJob(): Promise<RuntimeJob | null> {
 /** POST /chatbot/runtime/litellm/check — 별도 가상환경에서 호환성 확인 (처음엔 수십 초) */
 export async function checkLiteLLM(version: string): Promise<{ version: string; ok: boolean; reason: string }> {
   return apiFetch('/chatbot/runtime/litellm/check', { method: 'POST', body: JSON.stringify({ version }) })
+}
+
+/** POST /chatbot/runtime/ollama/remove — 엔진(과 선택 시 받은 모델)을 지워 디스크를 비운다 */
+export async function removeOllamaEngine(includeModels: boolean): Promise<{ freedBytes: number }> {
+  return apiFetch('/chatbot/runtime/ollama/remove', { method: 'POST', body: JSON.stringify({ includeModels }) })
 }
