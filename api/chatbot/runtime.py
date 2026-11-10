@@ -24,7 +24,7 @@ from api.llm_gateway import local_runtime as lr
 from api.llm_gateway import ollama_upgrade as ou
 from api.llm_gateway.local_models import PULL_MANAGER
 from api.llm_gateway.providers import LOCAL_PROVIDERS, split_model_id
-from api.llm_gateway.runtime_update import LITELLM_LOCKED_REASON, RUNTIME_UPDATER, RuntimeUpdateError
+from api.llm_gateway.runtime_update import RUNTIME_UPDATER, RuntimeUpdateError
 from api.stack import FROZEN
 from api.load_variable import MODEL_REGISTRY
 
@@ -78,12 +78,6 @@ async def _ollama_status() -> dict:
 
 async def _litellm_status() -> dict:
     current = lu.installed_version()
-    if FROZEN:
-        # exe에 묶인 LiteLLM은 화면에서 바꿀 수 없다 — 버전만 보여준다
-        return {"current": current, "latest": None, "latestCompatible": None, "scanning": False,
-                "updateAvailable": False, "canRestart": False, "lockedReason": LITELLM_LOCKED_REASON,
-                "releases": [{"version": current, "publishedAt": "", "compatible": True, "compatReason": "현재 버전"}],
-                "releasesError": None}
     releases, error = [], None
     try:
         releases = await asyncio.to_thread(lu.list_releases, 200)
@@ -100,14 +94,22 @@ async def _litellm_status() -> dict:
         r["compatReason"] = None if c is None else c.get("reason")
     latest = releases[0]["version"] if releases else None
     compatible = lu.SCANNER.result
+    can_restart = runtime_control.can_restart_app() if FROZEN else runtime_control.can_restart()
+    bundled = None
+    if FROZEN:
+        from api.litellm_overlay import bundled_version
+        bundled = bundled_version()   # exe에 묶인 원래 버전 (덮어 쓴 버전을 쓰는 중이면 current와 다르다)
     return {
         "current": current,
         "latest": latest,
         "latestCompatible": compatible,
         "scanning": lu.SCANNER.scanning,
         "updateAvailable": bool(compatible and lu.version_key(compatible) > lu.version_key(current)),
-        "canRestart": runtime_control.can_restart(),
-        "lockedReason": None if runtime_control.can_restart() else
+        "canRestart": can_restart,
+        # exe: 앱 전체를 다시 띄워 적용 / 개발: 새 콘솔 창에서 설치 후 서버 재시작
+        "restartMode": "app" if FROZEN else "console",
+        "bundled": bundled,
+        "lockedReason": None if can_restart else
             "서버를 `uv run python main.py`로 실행해야 LiteLLM을 바꿀 수 있습니다 (자동 재시작 필요).",
         "releases": shown,
         "releasesError": error,

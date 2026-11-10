@@ -40,8 +40,13 @@ export interface LiteLLMRuntime {
   latestCompatible: string | null
   scanning: boolean
   updateAvailable: boolean
-  /** 서버를 스스로 재시작할 수 있는지 (main.py로 띄운 경우) */
+  /** 적용할 수 있는지 (개발: main.py로 띄운 경우 / exe: 데스크톱 앱) */
   canRestart: boolean
+  /** app: exe — 앱 전체가 잠시 다시 시작 / console: 개발 — 새 콘솔 창에서 설치 후 서버 재시작 */
+  restartMode: 'app' | 'console'
+  /** exe에 묶인 원래 버전 (개발에서는 null) */
+  bundled: string | null
+  lockedReason: string | null
   releases: Release[]
   releasesError: string | null
 }

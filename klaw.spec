@@ -12,9 +12,10 @@ exe에 들어가는 것: 실행기(launcher.py) + 백엔드(main·api) + 파이�
 법령 MCP는 자식 프로세스(node.exe). Ollama 엔진(1.6GB)은 넣지 않고 로컬 모델을 쓸 때 마이 페이지에서 받는다.
 """
 import os
+import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
 
 ROOT = Path(SPECPATH)
 MODE = os.getenv("KLAW_BUILD_MODE", "onefile")
@@ -28,9 +29,19 @@ datas = [
     (str(LAW_MCP), "law_mcp"),
     (str(ROOT / "assets"), "assets"),
     (str(ROOT / "api" / "llm_gateway" / "seed_models.json"), "api/llm_gateway"),
+    # exe에서 LiteLLM 새 버전을 시험할 때 exe 자신이 실행하는 점검 스크립트 (api/litellm_overlay.py)
+    (str(ROOT / "scripts" / "check_litellm_compat.py"), "scripts"),
 ]
+# LiteLLM 새 버전이 요구하는 패키지 버전을 exe 안에서 확인할 수 있도록 의존성 메타데이터를 함께 넣는다
+for dist in ("litellm", "langchain-litellm", "mcp"):
+    datas += copy_metadata(dist, recursive=True)
 binaries = []
-hiddenimports = ["main"] + collect_submodules("api") + collect_submodules("uvicorn")
+hiddenimports = ["main", "packaging.requirements", "packaging.specifiers", "packaging.markers"] \
+    + collect_submodules("api") + collect_submodules("uvicorn")
+# 표준 라이브러리는 통째로 넣는다 — 나중에 받는 LiteLLM 새 버전이 지금 코드가 안 쓰는 표준 모듈(예: graphlib)을
+# import해도 exe 안에 있도록 (api/litellm_overlay.py). 몇 MB 늘어날 뿐이다.
+_STDLIB_SKIP = {"test", "idlelib", "turtledemo", "turtle", "lib2to3", "ensurepip", "venv", "pydoc_data", "this", "antigravity"}
+hiddenimports += [m for m in sys.stdlib_module_names if not m.startswith("_") and m not in _STDLIB_SKIP]
 
 # 데이터 파일·동적 import가 많은 패키지는 통째로 담는다 (가격표·토크나이저·OCR 설정·브라우저 드라이버 등)
 for pkg in [

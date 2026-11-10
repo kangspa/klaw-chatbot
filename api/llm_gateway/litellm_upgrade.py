@@ -8,6 +8,8 @@ LiteLLM은 백엔드가 직접 쓰는 패키지라 버전을 바꾸려면 서버
 mcp·langchain-litellm을 지금 설치된 버전으로 묶는 이유: 1.106+처럼 이 프로젝트의 다른 의존성과 맞지 않는
 버전(mcp 2.3 필요)을 걸러내기 위해서다.
 
+exe에서는 uv·가상환경이 없으므로 휠을 받아 exe 자신을 시험 모드로 띄워 확인한다 (api/litellm_overlay.py).
+
 확인 결과는 .runtime/litellm_compat.json에 캐시한다 (버전마다 결과가 바뀌지 않으므로).
 """
 import asyncio
@@ -22,7 +24,7 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
-from api.stack import REPO_ROOT as PROJECT_ROOT, RUNTIME_DIR
+from api.stack import FROZEN, REPO_ROOT as PROJECT_ROOT, RUNTIME_DIR
 COMPAT_CACHE = RUNTIME_DIR / "litellm_compat.json"
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 PYPI_URL = "https://pypi.org/pypi/litellm/json"
@@ -73,13 +75,20 @@ def cached_compat(version: str) -> Optional[dict]:
     """이미 확인한 결과 {ok, reason, checkedAt}. 지금 설치된 버전은 동작 중이므로 호환으로 본다."""
     if version == installed_version():
         return {"ok": True, "reason": "현재 설치된 버전", "checkedAt": None}
+    if FROZEN:
+        from api.litellm_overlay import bundled_version
+        if version == bundled_version():
+            return {"ok": True, "reason": "exe 기본 버전", "checkedAt": None}
     entry = _load_cache().get(version)
     # 함께 묶는 의존성 버전이 바뀌면 결과도 달라질 수 있으므로 같은 조합일 때만 재사용한다
     return entry if entry and entry.get("deps") == _pinned_deps() else None
 
 
 def _pinned_deps() -> dict:
-    return {"mcp": md.version("mcp"), "langchain-litellm": md.version("langchain-litellm")}
+    deps = {"mcp": md.version("mcp"), "langchain-litellm": md.version("langchain-litellm")}
+    if FROZEN:
+        deps["mode"] = "exe"   # exe 안의 패키지 조합으로 확인한 결과는 개발 환경 결과와 따로 둔다
+    return deps
 
 
 def check_compat(version: str, model_ids: list[str], timeout: int = 600) -> dict:
@@ -92,6 +101,18 @@ def check_compat(version: str, model_ids: list[str], timeout: int = 600) -> dict
     cached = cached_compat(version)
     if cached is not None:
         return cached
+    if FROZEN:
+        from api import litellm_overlay
+        try:
+            result = litellm_overlay.check(version, model_ids, log=lambda m: print(f"[litellm-upgrade] {m}"))
+        except Exception as e:
+            result = {"ok": False, "reason": f"확인하지 못했습니다: {type(e).__name__}: {e}"}
+        result.update(checkedAt=time.time(), deps=_pinned_deps())
+        if not result["reason"].startswith("확인하지 못했습니다"):   # 네트워크 오류는 캐시하지 않는다
+            cache = _load_cache()
+            cache[version] = result
+            _save_cache(cache)
+        return result
     uv = shutil.which("uv")
     if uv is None:
         return {"ok": False, "reason": "uv 명령을 찾을 수 없어 확인할 수 없습니다.", "checkedAt": time.time()}

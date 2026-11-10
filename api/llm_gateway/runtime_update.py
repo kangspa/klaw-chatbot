@@ -4,8 +4,11 @@
 순서 (둘 다 바꿀 때):
   1. LiteLLM 호환성 확인 (별도 가상환경)  — 안 맞으면 아무것도 바꾸지 않고 끝낸다
   2. Ollama 변경 (엔진 다운로드 → 다시 시작 → 확인, 실패 시 이전 버전으로 되돌림) — 실패하면 LiteLLM은 건드리지 않는다
-  3. LiteLLM 적용 — 서버가 scripts/apply_litellm_update.py를 새 콘솔로 띄우고 스스로 종료한다.
-     도우미가 설치·확인(실패 시 되돌림)한 뒤 서버를 다시 띄운다.
+  3. LiteLLM 적용
+     개발: 서버가 scripts/apply_litellm_update.py를 새 콘솔로 띄우고 스스로 종료한다.
+           도우미가 설치·확인(실패 시 되돌림)한 뒤 서버를 다시 띄운다.
+     exe : 확인 단계에서 받아 둔 휠 폴더를 '다음 실행에 시험할 버전'으로 기록하고 앱 전체를 다시 띄운다.
+           새 앱이 뜨면 확정, 못 뜨면 원래 버전으로 되돌린다 (api/litellm_overlay.py).
 
 진행 상태는 메모리에 두되, 서버가 재시작되는 3단계부터는 .runtime/runtime_job.json에 적어
 도우미가 이어서 기록하고, 다시 뜬 서버가 그 파일을 읽어 결과를 보여준다.
@@ -29,8 +32,6 @@ from api.stack import FROZEN, REPO_ROOT as PROJECT_ROOT, RUNTIME_DIR
 
 JOB_FILE = RUNTIME_DIR / "runtime_job.json"
 HELPER = PROJECT_ROOT / "scripts" / "apply_litellm_update.py"
-# 패키징된 exe는 LiteLLM이 실행 파일 안에 묶여 있어 화면에서 바꿀 수 없다 (새 버전 exe로 바꾼다)
-LITELLM_LOCKED_REASON = "패키징된 앱(exe)에서는 LiteLLM이 실행 파일에 포함되어 있어 바꿀 수 없습니다. 새 버전의 exe로 업데이트하세요."
 
 
 class RuntimeUpdateError(RuntimeError):
@@ -76,9 +77,9 @@ class RuntimeUpdater:
     def start(self, ollama: Optional[str], litellm: Optional[str], model_ids: list[str]) -> RuntimeJob:
         if self.running or OLLAMA_UPGRADER.running:
             raise RuntimeUpdateError("이미 런타임 버전을 변경하는 중입니다.")
-        if litellm and FROZEN:
-            raise RuntimeUpdateError(LITELLM_LOCKED_REASON)
-        if litellm and not runtime_control.can_restart():
+        if litellm and FROZEN and not runtime_control.can_restart_app():
+            raise RuntimeUpdateError("앱을 다시 띄울 수 없는 실행 방식이라 LiteLLM을 바꿀 수 없습니다.")
+        if litellm and not FROZEN and not runtime_control.can_restart():
             raise RuntimeUpdateError(
                 "LiteLLM을 바꾸려면 서버를 다시 띄워야 하는데, 이 서버는 `uv run python main.py`로 실행되지 않아 "
                 "자동 재시작을 할 수 없습니다."
@@ -116,6 +117,17 @@ class RuntimeUpdater:
                         litellm["status"] = "skipped"
                     raise RuntimeUpdateError(sub.message + (" (LiteLLM은 바꾸지 않았습니다)" if litellm else ""))
                 job.message = sub.message
+
+            if litellm and FROZEN:
+                from api import litellm_overlay
+                self._step(job, f"LiteLLM {litellm['to']} 적용 — 앱 재시작")
+                litellm_overlay.set_trial(litellm["to"])
+                self._log(job, "앱을 다시 시작합니다. 잠시 뒤 이 화면이 다시 연결됩니다 (새 버전으로 뜨지 못하면 원래 버전으로 되돌립니다).")
+                litellm["status"] = "running"
+                job.status = "restarting"
+                self._save(job)
+                runtime_control.request_restart()
+                return   # 이후 기록은 다시 뜬 앱이 이어서 한다 (litellm_overlay.confirm_boot)
 
             if litellm:
                 self._step(job, f"LiteLLM {litellm['to']} 적용 — 서버 재시작")

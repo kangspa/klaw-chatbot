@@ -140,7 +140,9 @@ export default function RuntimeCard({ onChanged }: RuntimeCardProps) {
     const lines = []
     if (targets.ollama && !ollama.installed) lines.push(`· Ollama ${targets.ollama} 엔진을 받습니다 (약 1.6GB, 몇 분). 앱 데이터 폴더에만 저장되며 언제든 지울 수 있습니다.`)
     else if (targets.ollama) lines.push(`· Ollama ${ollama.current} → ${targets.ollama}: 새 엔진을 받아(약 1.6GB) 다시 시작하고, 이전 엔진은 지웁니다. 받은 모델은 그대로 남습니다.`)
-    if (targets.litellm) lines.push(`· LiteLLM ${litellm.current} → ${targets.litellm}: 백엔드 서버가 내려갔다가 새 콘솔 창에서 설치 후 다시 뜹니다.`)
+    if (targets.litellm) lines.push(litellm.restartMode === 'app'
+      ? `· LiteLLM ${litellm.current} → ${targets.litellm}: 새 버전을 받아 확인한 뒤 앱이 잠시 다시 시작됩니다 (트레이 아이콘이 잠깐 사라졌다 다시 생깁니다).`
+      : `· LiteLLM ${litellm.current} → ${targets.litellm}: 백엔드 서버가 내려갔다가 새 콘솔 창에서 설치 후 다시 뜹니다.`)
     lines.push('· 진행 중에는 채팅을 쓸 수 없습니다. 실패하면 이전 버전으로 자동으로 되돌립니다.')
     if (!window.confirm(`${!ollama.installed && targets.ollama && !targets.litellm ? 'Ollama 엔진을 설치할까요?' : '런타임 버전을 바꿀까요?'}\n\n${lines.join('\n')}`)) return
     setStarting(true)
@@ -225,6 +227,9 @@ export default function RuntimeCard({ onChanged }: RuntimeCardProps) {
               selected={selOllama}
               onSelect={setSelOllama}
               disabled={active || starting || removing || ollama.starting}
+              action={ollama.current && ollama.updateAvailable && ollama.latest
+                ? { label: `${ollama.latest}로 업데이트`, onClick: () => { setSelOllama(ollama.latest!); void apply({ ollama: ollama.latest, litellm: null }) } }
+                : null}
             />
             <RuntimeRow
               name="LiteLLM"
@@ -233,14 +238,21 @@ export default function RuntimeCard({ onChanged }: RuntimeCardProps) {
               badge={litellm.updateAvailable ? { tone: 'info', text: `업데이트 있음 · ${litellm.latestCompatible}` }
                 : litellm.scanning ? { tone: 'muted', text: '호환 버전 확인 중…' }
                   : { tone: 'ok', text: '최신 호환' }}
-              detail={litellm.latest && litellm.latest !== litellm.latestCompatible && litellm.latest !== litellm.current
-                ? `최신 ${litellm.latest}은 이 프로젝트와 호환되지 않습니다 (도구 호출 의존성 충돌).` : null}
+              detail={[
+                litellm.latest && litellm.latest !== litellm.latestCompatible && litellm.latest !== litellm.current
+                  ? `최신 ${litellm.latest}은 이 프로젝트와 호환되지 않습니다 (도구 호출 의존성 충돌).` : null,
+                litellm.bundled && litellm.bundled !== litellm.current
+                  ? `앱 기본 버전 ${litellm.bundled} 대신 받은 버전을 쓰는 중 — 목록에서 ${litellm.bundled}을 고르면 되돌립니다.` : null,
+              ].filter(Boolean).join(' ') || null}
               releases={litellm.releases}
               releasesError={litellm.releasesError}
               selected={selLitellm}
               onSelect={(v) => void pickLitellm(v)}
               disabled={active || starting}
               compatOf={litellmCompat}
+              action={litellm.updateAvailable && litellm.latestCompatible && litellm.canRestart
+                ? { label: `${litellm.latestCompatible}로 업데이트`, onClick: () => { setSelLitellm(litellm.latestCompatible!); void apply({ ollama: null, litellm: litellm.latestCompatible }) } }
+                : null}
             />
           </div>
 
@@ -251,7 +263,7 @@ export default function RuntimeCard({ onChanged }: RuntimeCardProps) {
             <p className="settings__error">LiteLLM {litellmTarget}은 쓸 수 없습니다: {litellmState.reason}</p>
           )}
           {litellmTarget && !litellm.canRestart && (
-            <p className="settings__error">서버를 `uv run python main.py`로 실행해야 LiteLLM을 바꿀 수 있습니다 (자동 재시작 필요).</p>
+            <p className="settings__error">{litellm.lockedReason ?? 'LiteLLM을 바꿀 수 없는 실행 방식입니다.'}</p>
           )}
 
           <div className="runtime-actions">
@@ -295,7 +307,9 @@ export default function RuntimeCard({ onChanged }: RuntimeCardProps) {
               {job.status === 'restarting' && (
                 <p className="upgrade-job__message">
                   {offline ? '서버가 다시 시작되기를 기다리는 중입니다… ' : ''}
-                  새로 열린 콘솔 창에서 LiteLLM을 설치한 뒤 서버를 다시 띄웁니다. 끝나면 이 화면이 자동으로 다시 연결됩니다.
+                  {litellm.restartMode === 'app'
+                    ? '앱을 새 LiteLLM으로 다시 시작하는 중입니다. 끝나면 이 화면이 자동으로 다시 연결됩니다.'
+                    : '새로 열린 콘솔 창에서 LiteLLM을 설치한 뒤 서버를 다시 띄웁니다. 끝나면 이 화면이 자동으로 다시 연결됩니다.'}
                 </p>
               )}
               {!active && job.message && <p className="upgrade-job__message">{job.message}</p>}
@@ -320,9 +334,11 @@ interface RuntimeRowProps {
   onSelect: (v: string) => void
   disabled: boolean
   compatOf?: (v: string) => Compat | null
+  /** 새 버전이 확인됐을 때 바로 올리는 버튼 */
+  action?: { label: string; onClick: () => void } | null
 }
 
-function RuntimeRow({ name, desc, current, badge, detail, releases, releasesError, selected, onSelect, disabled, compatOf }: RuntimeRowProps) {
+function RuntimeRow({ name, desc, current, badge, detail, releases, releasesError, selected, onSelect, disabled, compatOf, action }: RuntimeRowProps) {
   const latest = releases[0]?.version
   return (
     <div className="runtime-row">
@@ -333,6 +349,9 @@ function RuntimeRow({ name, desc, current, badge, detail, releases, releasesErro
         <div className="runtime-row__current">
           {current ? <strong>{current}</strong> : <span className="ollama-info__muted">—</span>}
           {badge && <span className={`badge badge--${badge.tone}`}>{badge.text}</span>}
+          {action && (
+            <button className="btn btn--primary btn--sm" onClick={action.onClick} disabled={disabled}>{action.label}</button>
+          )}
         </div>
         {detail && <div className="runtime-row__detail">{detail}</div>}
       </div>

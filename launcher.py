@@ -83,6 +83,33 @@ def cleanup_stale_extractions() -> None:
             pass
 
 
+# ────────────────────────── 다시 시작 ──────────────────────────
+AFTER_PID_FLAG = "--after-pid"
+
+
+def wait_for_pid(pid: int, timeout: float = 90) -> None:
+    """재시작으로 띄워진 경우, 이전 프로세스가 완전히 끝날 때까지 기다린다 (포트·뮤텍스·Qdrant 폴더 잠금이 풀리도록)."""
+    if os.name != "nt":
+        return
+    k32 = ctypes.windll.kernel32
+    handle = k32.OpenProcess(0x00100000, False, pid)   # SYNCHRONIZE
+    if handle:
+        k32.WaitForSingleObject(handle, int(timeout * 1000))
+        k32.CloseHandle(handle)
+
+
+def spawn_restart() -> None:
+    """새 인스턴스를 띄운다. 새 인스턴스는 지금 프로세스가 끝난 뒤에 시작한다."""
+    cmd = [sys.executable] + ([] if stack.FROZEN else [str(Path(__file__).resolve())])
+    cmd += [AFTER_PID_FLAG, str(os.getpid())]
+    # PYINSTALLER_RESET_ENVIRONMENT: exe 하나 빌드는 자식이 부모의 압축 해제 폴더를 같이 쓰는데, 재시작한 앱은
+    # 부모가 끝난 뒤에도 살아야 하므로 독립 실행으로 띄운다 (부모가 지우는 폴더를 쓰면 안 된다)
+    env = {**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1", "KLAW_NO_BROWSER": "1"}
+    flags = 0x00000008 | 0x00000200 if os.name == "nt" else 0   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(cmd, env=env, cwd=str(stack.HOME), creationflags=flags, close_fds=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 # ────────────────────────── 한 번만 실행 ──────────────────────────
 INSTANCE_FILE = stack.RUNTIME_DIR / "instance.json"
 
@@ -153,6 +180,12 @@ class DesktopApp:
     def quit(self, *_):
         threading.Thread(target=self._shutdown, daemon=True).start()
 
+    def restart(self) -> None:
+        """앱 전체 재시작 (exe에서 LiteLLM 버전을 바꿀 때). 새 인스턴스가 이 프로세스가 끝나길 기다렸다가 뜬다."""
+        self.log("[launcher] 다시 시작합니다")
+        spawn_restart()
+        self._shutdown()
+
     def _shutdown(self):
         self.ready = False
         self.set_status("종료하는 중…")
@@ -205,6 +238,12 @@ class DesktopApp:
             pass
         except Exception as e:
             self.log(traceback.format_exc())
+            from api import litellm_overlay
+            if litellm_overlay.trial_pending():
+                # 새로 받은 LiteLLM으로 뜨지 못했다 → 원래 버전으로 다시 띄운다
+                litellm_overlay.fail_trial(f"새 버전으로 시작하지 못해 이전 버전으로 되돌렸습니다 ({type(e).__name__}: {e})", self.log)
+                self.restart()
+                return
             self.fail(f"{type(e).__name__}: {e}")
 
     def _start_server(self, port: int):
@@ -212,12 +251,15 @@ class DesktopApp:
         os.chdir(stack.HOME)   # 상대 경로로 파일을 만드는 라이브러리가 있어도 앱 폴더 안에만 생기도록
         import asyncio
         import uvicorn
+        from api import litellm_overlay
+        litellm_overlay.activate(self.log)   # 바꿔 둔 LiteLLM 버전이 있으면 import 경로 맨 앞에 (앱 import 전에)
         import main   # 무거운 import (LLM·MCP·OCR 등). 법령 MCP 자식 프로세스도 여기서 뜬다
         self.set_status("웹 서버를 시작하는 중…")
         from api import runtime_control
         config = uvicorn.Config(main.app, host="127.0.0.1", port=port, reload=False, log_config=None)
         self.server = uvicorn.Server(config)
         runtime_control.register(self.server, [])
+        runtime_control.register_restart(self.restart)
         self.port = port
         self.server_thread = threading.Thread(target=lambda: asyncio.run(self.server.serve()), daemon=True)
         self.server_thread.start()
@@ -228,10 +270,16 @@ class DesktopApp:
             time.sleep(0.3)
         if not self.server.started:
             raise RuntimeError("웹 서버가 3분 안에 시작하지 않았습니다.")
+        litellm_overlay.confirm_boot(self.log)   # 시험 중이던 LiteLLM 버전으로 웹 서버까지 떴으면 확정
 
 
 def main() -> int:
+    from api import litellm_overlay
+    if litellm_overlay.CHECK_FLAG in sys.argv:   # LiteLLM 새 버전 시험 모드 (앱을 띄우지 않는다)
+        return litellm_overlay.run_check_mode(sys.argv[sys.argv.index(litellm_overlay.CHECK_FLAG) + 1:])
     log_path = setup_logging()
+    if AFTER_PID_FLAG in sys.argv:
+        wait_for_pid(int(sys.argv[sys.argv.index(AFTER_PID_FLAG) + 1]))
     hide_child_windows()
     if not acquire_single_instance():
         print("[launcher] 이미 실행 중 — 브라우저만 엽니다", flush=True)
