@@ -1,5 +1,5 @@
 """
-seed_models.json → Postgres(llm_models) 동기화 스크립트.
+seed_models.json → SQLite(llm_models) 동기화 스크립트.
 
 서버는 테이블이 비어 있을 때만 JSON으로 채운다. 이후 JSON을 고쳤다면 이 스크립트로 DB에 반영한다.
 실행 중인 서버는 LLM_REGISTRY_TTL초(기본 30) 안에 바뀐 내용을 자동으로 다시 읽는다 (재시작 불필요).
@@ -16,27 +16,14 @@ seed_models.json → Postgres(llm_models) 동기화 스크립트.
 
 import argparse
 import asyncio
-import os
 import sys
-import types
 from pathlib import Path
-
-# asyncpg가 Windows에서 SelectorEventLoop를 필요로 하므로 다른 import보다 먼저 정책 지정
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# api/__init__.py를 실행하지 않고 하위 모듈만 쓰기 위해 빈 패키지로 등록한다.
-# (그대로 import하면 라우터·MCP 클라이언트·LLM 초기화까지 끌려 들어온다 — reset_db.py와 같은 이유)
-_api_pkg = types.ModuleType("api")
-_api_pkg.__path__ = [str(PROJECT_ROOT / "api")]
-sys.modules["api"] = _api_pkg
-
-import asyncpg  # noqa: E402
-
-from api.db import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER, SCHEMA_SQL  # noqa: E402
+# api/__init__.py는 .env와 서비스 주소만 읽는 가벼운 초기화라 그대로 import한다 (라우터·LLM은 끌려오지 않는다)
+from api.db import connect, db_path  # noqa: E402
 from api.llm_gateway.store import SEED_PATH, read_seed, upsert_models  # noqa: E402
 
 
@@ -50,10 +37,9 @@ async def main() -> None:
     models = read_seed(args.file)
     json_ids = [m["id"] for m in models]
 
-    conn = await asyncpg.connect(host=DB_HOST, port=DB_PORT, database=DB_NAME,
-                                 user=DB_USER, password=DB_PASSWORD)
+    pool = await connect()   # DB 파일·테이블이 없으면 생성
+    conn = pool.connection()
     try:
-        await conn.execute(SCHEMA_SQL)   # 테이블이 없으면 생성
         rows = await conn.fetch("SELECT id, is_custom FROM llm_models")
         db_ids = {r["id"] for r in rows}
         # 마이 페이지에서 삭제한 기본 모델은 되살리지 않는다 (복원은 마이 페이지 '기본 모델 복원')
@@ -68,7 +54,7 @@ async def main() -> None:
         updated = [i for i in json_ids if i in db_ids]
         missing = sorted(db_ids - set(json_ids) - custom_ids)
 
-        print(f"대상 DB : {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
+        print(f"대상 DB : {db_path()}")
         print(f"JSON    : {args.file}")
         print(f"  추가 {len(added)}개: {added or '-'}")
         print(f"  갱신 {len(updated)}개")
@@ -83,7 +69,7 @@ async def main() -> None:
         async with conn.transaction():
             await upsert_models(conn, models)
             if args.prune and missing:
-                await conn.execute("DELETE FROM llm_models WHERE id = ANY($1::text[])", missing)
+                await conn.execute("DELETE FROM llm_models WHERE id = ANY($1)", missing)
 
         rows = await conn.fetch(
             "SELECT id, enabled, is_default FROM llm_models ORDER BY sort_order, id"
@@ -93,7 +79,7 @@ async def main() -> None:
             flags = ("기본 " if r["is_default"] else "") + ("" if r["enabled"] else "비활성")
             print(f"  - {r['id']}  {flags}")
     finally:
-        await conn.close()
+        await pool.close()
 
 
 if __name__ == "__main__":

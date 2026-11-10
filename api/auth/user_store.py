@@ -1,5 +1,5 @@
 """
-사용자 Postgres 저장소.
+사용자 저장소 (SQLite, api/db.py).
 
 개인 PC에서 띄워 쓰는 서비스라 로그인 없이 '로컬 사용자' 하나로 동작한다 (users.is_local).
 Google 계정 연결은 선택 사항이며, 연결해도 사용자가 바뀌지 않고 같은 행에 Google 정보만 채운다.
@@ -9,7 +9,7 @@ Google 계정 연결은 선택 사항이며, 연결해도 사용자가 바뀌지
 import uuid
 from typing import Any, Optional
 
-from api.db import get_pool
+from api.db import NOW, get_pool
 
 LOCAL_NAME = "로컬 사용자"
 
@@ -67,9 +67,9 @@ async def link_google(user_id: str, claims: dict[str, Any]) -> dict[str, Any]:
         async with conn.transaction():
             await conn.execute("UPDATE users SET google_sub = NULL WHERE google_sub = $1 AND id <> $2", google_sub, user_id)
             row = await conn.fetchrow(
-                """UPDATE users
+                f"""UPDATE users
                       SET google_sub = $2, email = $3, email_verified = $4, name = $5, picture = $6,
-                          updated_at = now(), last_login_at = now()
+                          updated_at = {NOW}, last_login_at = {NOW}
                     WHERE id = $1
                 RETURNING *""",
                 user_id, google_sub, email, bool(claims.get("email_verified", False)), name, claims.get("picture"),
@@ -81,9 +81,9 @@ async def unlink_google(user_id: str) -> dict[str, Any]:
     """Google 계정 연결을 푼다. 대화·설정 등 데이터는 그대로 남는다."""
     async with get_pool().acquire() as conn:
         row = await conn.fetchrow(
-            """UPDATE users
+            f"""UPDATE users
                   SET google_sub = NULL, email = NULL, email_verified = FALSE, name = $2, picture = NULL,
-                      updated_at = now()
+                      updated_at = {NOW}
                 WHERE id = $1
             RETURNING *""",
             user_id, LOCAL_NAME,

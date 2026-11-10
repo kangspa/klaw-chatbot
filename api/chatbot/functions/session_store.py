@@ -1,5 +1,5 @@
 """
-Postgres 기반 세션/메시지 저장소 (사용자에게 보여줄 대화 원문의 진실 원본).
+SQLite(api/db.py) 기반 세션/메시지 저장소 (사용자에게 보여줄 대화 원문의 진실 원본).
 
 여기서 다루는 단위:
   - session : 프론트의 대화 세션 = LangGraph thread_id = Qdrant payload.thread_id
@@ -13,7 +13,7 @@ Postgres 기반 세션/메시지 저장소 (사용자에게 보여줄 대화 원
 import uuid
 from typing import Any, Optional
 
-from api.db import get_pool
+from api.db import NOW, get_pool
 
 DEFAULT_TITLE = "새 대화"
 
@@ -122,7 +122,7 @@ async def list_sessions_with_messages(owner_id: str) -> list[dict[str, Any]]:
             return []
         ids = [r["id"] for r in srows]
         mrows = await conn.fetch(
-            "SELECT * FROM chat_messages WHERE session_id = ANY($1::text[]) ORDER BY session_id, seq",
+            "SELECT * FROM chat_messages WHERE session_id = ANY($1) ORDER BY session_id, seq",
             ids,
         )
 
@@ -150,7 +150,7 @@ async def rename_session(session_id: str, title: str) -> Optional[dict[str, Any]
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "UPDATE chat_sessions SET title = $2, updated_at = now() WHERE id = $1 RETURNING *",
+            f"UPDATE chat_sessions SET title = $2, updated_at = {NOW} WHERE id = $1 RETURNING *",
             session_id, title,
         )
     return _session_row(row) if row else None
@@ -167,7 +167,7 @@ async def delete_session(session_id: str) -> bool:
 async def touch_session(session_id: str) -> None:
     pool = get_pool()
     async with pool.acquire() as conn:
-        await conn.execute("UPDATE chat_sessions SET updated_at = now() WHERE id = $1", session_id)
+        await conn.execute(f"UPDATE chat_sessions SET updated_at = {NOW} WHERE id = $1", session_id)
 
 
 # ────────────────────────── 메시지 ──────────────────────────
@@ -249,10 +249,10 @@ async def append_turn(
             )
             # 첫 사용자 메시지면 제목 자동 생성
             srow = await conn.fetchrow(
-                """
+                f"""
                 UPDATE chat_sessions
-                   SET updated_at = now(),
-                       title = CASE WHEN title = $2 THEN LEFT($3, 40) ELSE title END
+                   SET updated_at = {NOW},
+                       title = CASE WHEN title = $2 THEN substr($3, 1, 40) ELSE title END
                  WHERE id = $1
                 RETURNING *
                 """,
@@ -277,12 +277,12 @@ async def update_assistant_message(
     async with pool.acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(
-                """
+                f"""
                 UPDATE chat_messages
                    SET content = $3,
                        graph_message_id = COALESCE($4, graph_message_id),
                        model = COALESCE($5, model),
-                       updated_at = now()
+                       updated_at = {NOW}
                  WHERE session_id = $1 AND id = $2
                 RETURNING *
                 """,
@@ -290,7 +290,7 @@ async def update_assistant_message(
             )
             if row:
                 await conn.execute(
-                    "UPDATE chat_sessions SET updated_at = now() WHERE id = $1", session_id
+                    f"UPDATE chat_sessions SET updated_at = {NOW} WHERE id = $1", session_id
                 )
     return _message_row(row) if row else None
 
@@ -306,7 +306,7 @@ async def delete_turn(session_id: str, turn_id: str) -> list[dict[str, Any]]:
             )
             if rows:
                 await conn.execute(
-                    "UPDATE chat_sessions SET updated_at = now() WHERE id = $1", session_id
+                    f"UPDATE chat_sessions SET updated_at = {NOW} WHERE id = $1", session_id
                 )
     return [_message_row(r) for r in rows]
 
@@ -322,7 +322,7 @@ async def delete_message(session_id: str, message_id: str) -> Optional[dict[str,
             )
             if row:
                 await conn.execute(
-                    "UPDATE chat_sessions SET updated_at = now() WHERE id = $1", session_id
+                    f"UPDATE chat_sessions SET updated_at = {NOW} WHERE id = $1", session_id
                 )
     return _message_row(row) if row else None
 
@@ -365,6 +365,6 @@ async def copy_messages_upto(
                 )
                 inserted.append(_message_row(row))
             await conn.execute(
-                "UPDATE chat_sessions SET updated_at = now() WHERE id = $1", dst_session_id
+                f"UPDATE chat_sessions SET updated_at = {NOW} WHERE id = $1", dst_session_id
             )
     return inserted

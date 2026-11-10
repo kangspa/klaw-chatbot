@@ -2,12 +2,13 @@
 llm_models 테이블 입출력과 seed JSON 반영.
 
 테이블 스키마는 api/db.py의 SCHEMA_SQL에 있다.
-연결(asyncpg Pool/Connection)은 호출부가 넘겨준다 — 게이트웨이가 풀 수명주기를 알 필요가 없도록.
+연결(api/db.py의 Pool/Connection — asyncpg 모양의 SQLite 래퍼)은 호출부가 넘겨준다 — 게이트웨이가 풀 수명주기를 알 필요가 없도록.
 """
 import json
 from pathlib import Path
 
 
+from api.db import NOW
 from api.llm_gateway.providers import split_model_id
 from api.llm_gateway.registry import ModelSpec
 
@@ -23,7 +24,7 @@ async def load_models(conn) -> list[ModelSpec]:
     specs = []
     for r in model_rows:
         options = r["options"]
-        if isinstance(options, str):   # asyncpg는 기본 설정에서 JSONB를 문자열로 돌려준다
+        if isinstance(options, str):   # (래퍼가 JSON 컬럼을 dict로 돌려주지만, 혹시 문자열이면 직접 푼다)
             options = json.loads(options)
         specs.append(ModelSpec(
             id=r["id"], label=r["label"], group=r["group_name"], sort_order=r["sort_order"],
@@ -51,18 +52,18 @@ async def upsert_models(conn, models: list[dict]) -> None:
     """
     if any(m.get("is_default") for m in models):
         # 기본 모델은 하나만 허용(부분 유니크 인덱스)하므로 먼저 기존 기본값을 해제한다.
-        await conn.execute("UPDATE llm_models SET is_default = FALSE WHERE is_default")
+        await conn.execute("UPDATE llm_models SET is_default = 0 WHERE is_default")
     for m in models:
         await conn.execute(
-            """INSERT INTO llm_models (id, label, group_name, sort_order, enabled, is_default,
+            f"""INSERT INTO llm_models (id, label, group_name, sort_order, enabled, is_default,
                                        fixed_temperature, options)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                ON CONFLICT (id) DO UPDATE SET
-                   label = EXCLUDED.label, group_name = EXCLUDED.group_name,
-                   sort_order = EXCLUDED.sort_order, enabled = EXCLUDED.enabled,
-                   is_default = EXCLUDED.is_default, fixed_temperature = EXCLUDED.fixed_temperature,
-                   options = EXCLUDED.options, updated_at = now()""",
-            m["id"], m["label"], m["group"], m.get("sort_order", 0), m.get("enabled", True),
+                   label = excluded.label, group_name = excluded.group_name,
+                   sort_order = excluded.sort_order, enabled = excluded.enabled,
+                   is_default = excluded.is_default, fixed_temperature = excluded.fixed_temperature,
+                   options = excluded.options, updated_at = {NOW}""",
+            m["id"], m["label"], m["group"], m.get("sort_order", 0), bool(m.get("enabled", True)),
             bool(m.get("is_default")), bool(m.get("fixed_temperature")),
             json.dumps(m.get("options") or {}, ensure_ascii=False),
         )
@@ -83,14 +84,14 @@ async def add_custom_model(conn, model_id: str, label: str, created_by: str) -> 
     await conn.execute(
         """INSERT INTO llm_models (id, label, group_name, sort_order, enabled, is_default,
                                    fixed_temperature, options, is_custom, created_by)
-           VALUES ($1, $2, $3, $4, TRUE, FALSE, FALSE, $5::jsonb, TRUE, $6)""",
+           VALUES ($1, $2, $3, $4, 1, 0, 0, $5, 1, $6)""",
         model_id, label, CUSTOM_GROUP, sort_order, json.dumps(CUSTOM_OPTIONS), created_by,
     )
 
 
 async def rename_custom_model(conn, model_id: str, label: str) -> bool:
     result = await conn.execute(
-        "UPDATE llm_models SET label = $2, updated_at = now() WHERE id = $1 AND is_custom", model_id, label,
+        f"UPDATE llm_models SET label = $2, updated_at = {NOW} WHERE id = $1 AND is_custom", model_id, label,
     )
     return result.endswith(" 1")
 
@@ -114,7 +115,7 @@ async def add_api_model(conn, model_id: str, label: str, group: str, created_by:
     await conn.execute(
         """INSERT INTO llm_models (id, label, group_name, sort_order, enabled, is_default,
                                    fixed_temperature, options, is_custom, created_by)
-           VALUES ($1, $2, $3, $4, TRUE, FALSE, TRUE, '{}'::jsonb, TRUE, $5)""",
+           VALUES ($1, $2, $3, $4, 1, 0, 1, '{}', 1, $5)""",
         model_id, label, group, sort_order, created_by,
     )
     await conn.execute("DELETE FROM llm_models_removed WHERE id = $1", model_id)
@@ -148,7 +149,7 @@ async def restore_defaults(conn, model_ids: list[str]) -> int:
     async with conn.transaction():
         # is_default는 건드리지 않는다 (지금 기본 모델을 그대로 둔다)
         await upsert_models(conn, [{**m, "is_default": False} for m in targets])
-        await conn.execute("DELETE FROM llm_models_removed WHERE id = ANY($1::text[])", [m["id"] for m in targets])
+        await conn.execute("DELETE FROM llm_models_removed WHERE id = ANY($1)", [m["id"] for m in targets])
     return len(targets)
 
 

@@ -1,5 +1,5 @@
 """
-대시보드용 기록: 턴마다 모델 사용량·비용, 조회된 법령, 세션 요약을 Postgres에 남긴다.
+대시보드용 기록: 턴마다 모델 사용량·비용, 조회된 법령, 세션 요약을 DB(SQLite)에 남긴다.
 
   - llm_usage   : CostTrackingCallback이 모은 호출별 토큰·비용을 모델 단위로 합쳐 저장
   - law_lookups : 이번 턴에 법령 도구가 실제로 찾아온 법령명·조문 (LawLookupCallback)
@@ -18,7 +18,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from api.db import get_pool, is_ready
+from api.db import NOW, get_pool, is_ready
 from api.llm_gateway import CostTrackingCallback
 from api.llm_gateway.chat_model import content_to_text
 from api.load_variable import MODEL_MANAGER, MODEL_REGISTRY
@@ -118,7 +118,7 @@ async def record_turn(*, user_id: str, session_id: str, turn_id: str, cost_cb: C
     """
     턴 1회의 기록을 저장한다. 답변이 실패해도(state=None) 이미 발생한 비용은 기록한다.
     같은 turn_id로 다시 생성하면 조회 법령은 새 결과로 교체하고, 비용은 누적한다(실제로 다시 발생했으므로).
-    세션 요약은 답변이 Postgres에 저장된 뒤 schedule_session_summary로 따로 갱신한다.
+    세션 요약은 답변이 DB에 저장된 뒤 schedule_session_summary로 따로 갱신한다.
     """
     if not is_ready():
         return
@@ -138,7 +138,7 @@ async def record_turn(*, user_id: str, session_id: str, turn_id: str, cost_cb: C
                            input_tokens, cache_read_tokens, output_tokens, cost_usd)
                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
                     user_id, session_id, turn_id, model, int(u["calls"]),
-                    int(u["input"]), int(u["cache"]), int(u["output"]), u["cost"],
+                    int(u["input"]), int(u["cache"]), int(u["output"]), float(u["cost"]),
                 )
             if state is None:
                 return
@@ -233,7 +233,7 @@ async def refresh_session_summary(*, user_id: str, session_id: str, turn_id: Opt
         summary = {"overall": result.overall.strip(), "points": [p.strip() for p in result.points if p.strip()][:4]}
         async with get_pool().acquire() as conn:
             await conn.execute(
-                "UPDATE chat_sessions SET summary = $2::jsonb, summary_updated_at = now() WHERE id = $1",
+                f"UPDATE chat_sessions SET summary = $2, summary_updated_at = {NOW} WHERE id = $1",
                 session_id, json.dumps(summary, ensure_ascii=False),
             )
         await record_turn(user_id=user_id, session_id=session_id, turn_id=turn_id,

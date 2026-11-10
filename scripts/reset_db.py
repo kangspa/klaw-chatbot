@@ -5,10 +5,13 @@ Google 로그인 도입으로 chat_sessions.owner_id의 의미가 바뀌었기 �
 (이전: 이메일 문자열 / 이후: users.id UUID) 기존 데이터를 그대로 둘 수 없다.
 이 스크립트는 세 저장소를 모두 비운다.
 
-  - Postgres : users / chat_sessions / chat_messages 테이블 DROP 후 새 스키마로 재생성
+  - SQLite   : 사용자·대화·대시보드 기록 테이블 DROP 후 새 스키마로 재생성
+               (users / chat_sessions / chat_messages / user_disabled_models / llm_usage / law_lookups)
                (llm_models는 설정 데이터라 지우지 않는다 — scripts/sync_llm_models.py 참고)
-  - Qdrant   : conversation_history 컬렉션 삭제 (서버 startup에서 자동 재생성됨)
+  - Qdrant   : 로컬 모드 폴더(data/qdrant)의 conversation_history 컬렉션 삭제 (서버 startup에서 자동 재생성됨)
   - LangGraph: MemorySaver라 프로세스 메모리에만 있으므로 서버 재시작으로 비워짐
+
+반드시 앱(서버)을 끈 상태에서 실행한다. Qdrant 로컬 모드 폴더는 한 프로세스만 열 수 있다.
 
 사용법:
     uv run python scripts/reset_db.py          # 확인 프롬프트 후 실행
@@ -16,87 +19,58 @@ Google 로그인 도입으로 chat_sessions.owner_id의 의미가 바뀌었기 �
 """
 
 import asyncio
-import importlib.util
 import os
 import sys
-
-# psycopg/asyncpg가 Windows에서 SelectorEventLoop를 필요로 하므로 다른 import보다 먼저 정책 지정
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-import asyncpg  # noqa: E402
-import dotenv  # noqa: E402
-
-dotenv.load_dotenv()
-
-
-def load_schema_sql() -> str:
-    """
-    api/db.py의 SCHEMA_SQL을 그대로 재사용한다 (스키마 정의가 두 곳으로 갈라지지 않도록).
-
-    `from api.db import SCHEMA_SQL`을 쓰지 않는 이유: 그러면 api/__init__.py가 실행되면서
-    MCP 클라이언트·LLM 초기화까지 끌려 들어온다. 초기화 스크립트에는 불필요한 비용이라
-    파일만 단독으로 로드한다.
-    """
-    path = os.path.join(PROJECT_ROOT, "api", "db.py")
-    spec = importlib.util.spec_from_file_location("_klaw_db_schema", path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"api/db.py를 불러오지 못했습니다: {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.SCHEMA_SQL
-
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
-DB_NAME = os.getenv("DB_NAME", "raglaw")
-DB_USER = os.getenv("DB_USER", "raglaw")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "raglaw_dev_pw")
+# api/__init__.py는 .env와 서비스 주소만 읽는 가벼운 초기화라 그대로 import한다 (라우터·LLM은 끌려오지 않는다)
+from api import stack  # noqa: E402
+from api.db import SCHEMA_SQL, connect, db_path  # noqa: E402
 
 QDRANT_COLLECTION = "conversation_history"
 
-DROP_SQL = """
-DROP TABLE IF EXISTS user_disabled_models CASCADE;
-DROP TABLE IF EXISTS chat_messages CASCADE;
-DROP TABLE IF EXISTS chat_sessions CASCADE;
-DROP TABLE IF EXISTS users CASCADE;
-"""
+# 지울 테이블 (자식 → 부모 순서). llm_models·llm_models_removed는 설정이라 남긴다.
+RESET_TABLES = ("user_disabled_models", "law_lookups", "llm_usage", "chat_messages", "chat_sessions", "users")
 
 
-async def reset_postgres() -> None:
-    conn = await asyncpg.connect(
-        host=DB_HOST, port=DB_PORT, database=DB_NAME, user=DB_USER, password=DB_PASSWORD
-    )
+async def reset_sqlite() -> None:
+    pool = await connect()
     try:
-        before = await conn.fetch(
-            """
-            SELECT tablename FROM pg_tables
-             WHERE schemaname = 'public'
-               AND tablename IN ('users', 'chat_sessions', 'chat_messages')
-             ORDER BY tablename
-            """
-        )
-        print(f"  기존 테이블: {[r['tablename'] for r in before] or '없음'}")
+        async with pool.acquire() as conn:
+            before = await conn.fetch(
+                f"""SELECT name FROM sqlite_master WHERE type = 'table'
+                     AND name IN ({", ".join("'" + t + "'" for t in RESET_TABLES)}) ORDER BY name"""
+            )
+            print(f"  기존 테이블: {[r['name'] for r in before] or '없음'}")
 
-        await conn.execute(DROP_SQL)
-        print("  테이블 DROP 완료")
+            # 부모(users)를 지울 때 FK 동작(CASCADE·SET NULL)이 남은 테이블에 번지지 않게 잠시 끈다
+            await conn.execute("PRAGMA foreign_keys=OFF")
+            try:
+                await conn.executescript("".join(f"DROP TABLE IF EXISTS {t};\n" for t in RESET_TABLES)
+                                         + "UPDATE llm_models SET created_by = NULL;\n")
+            finally:
+                await conn.execute("PRAGMA foreign_keys=ON")
+            print("  테이블 DROP 완료")
 
-        await conn.execute(load_schema_sql())
-        print("  새 스키마 생성 완료 (users / chat_sessions / chat_messages)")
+            await conn.executescript(SCHEMA_SQL)
+            print("  새 스키마 생성 완료")
 
-        for table in ("users", "chat_sessions", "chat_messages"):
-            count = await conn.fetchval(f"SELECT count(*) FROM {table}")
-            print(f"    - {table}: {count}행")
+            for table in ("users", "chat_sessions", "chat_messages"):
+                count = await conn.fetchval(f"SELECT count(*) FROM {table}")
+                print(f"    - {table}: {count}행")
     finally:
-        await conn.close()
+        await pool.close()
 
 
 async def reset_qdrant() -> None:
     from qdrant_client import AsyncQdrantClient
 
-    client = AsyncQdrantClient(host="localhost", grpc_port=6334, prefer_grpc=True)
+    try:
+        client = AsyncQdrantClient(path=str(stack.QDRANT_PATH))
+    except Exception as e:   # 다른 프로세스(실행 중인 앱)가 폴더를 쥐고 있으면 열리지 않는다
+        raise SystemExit(f"  Qdrant 로컬 폴더를 열 수 없습니다 — 앱을 먼저 종료하세요: {type(e).__name__}: {e}")
     try:
         if await client.collection_exists(QDRANT_COLLECTION):
             info = await client.get_collection(QDRANT_COLLECTION)
@@ -113,8 +87,9 @@ async def main() -> None:
     print("=" * 60)
     print("저장소 완전 초기화")
     print("=" * 60)
-    print(f"  Postgres : {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
-    print("  Qdrant   : localhost:6334 / conversation_history")
+    print(f"  SQLite   : {db_path()}")
+    print(f"  Qdrant   : {stack.QDRANT_PATH} / conversation_history")
+    print("  ※ 앱(서버)이 실행 중이면 먼저 종료하세요 (Qdrant 로컬 폴더는 한 프로세스만 열 수 있다).")
     print()
 
     if "--yes" not in sys.argv:
@@ -123,8 +98,8 @@ async def main() -> None:
             print("취소했습니다.")
             return
 
-    print("\n[Postgres]")
-    await reset_postgres()
+    print("\n[SQLite]")
+    await reset_sqlite()
 
     print("\n[Qdrant]")
     await reset_qdrant()

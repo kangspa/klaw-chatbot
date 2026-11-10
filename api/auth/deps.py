@@ -18,6 +18,6 @@ async def get_current_user() -> dict[str, Any]:
     if not db_is_ready():
         raise HTTPException(
             status_code=503,
-            detail="Postgres에 연결되어 있지 않습니다. `docker compose up -d postgres` 후 서버를 다시 시작하세요.",
+            detail="DB(SQLite)를 열지 못했습니다. 로그(logs/klaw.log)의 [DB] 항목을 확인하고 앱을 다시 시작하세요.",
         )
     return await user_store.ensure_local_user()

@@ -7,7 +7,7 @@
   2) 브랜치    POST   /chatbot/sessions/{sessionId}/messages/{messageId}/branch
   3) 다시 실행 POST   /chatbot/sessions/{sessionId}/messages/{messageId}/regenerate
 
-세 동작 모두 Postgres(원문) · Qdrant(벡터) · LangGraph 체크포인트(실행 상태)에
+세 동작 모두 SQLite(원문) · Qdrant(벡터) · LangGraph 체크포인트(실행 상태)에
 같은 범위로 반영된다. 셋을 묶어주는 열쇠는 chat_messages.turn_id (= Qdrant point id)와
 chat_messages.graph_message_id (= LangGraph state 상의 message id)다.
 """
@@ -106,7 +106,7 @@ async def delete_session(
     request: Request,
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
-    """세션 삭제: Postgres 행 + Qdrant의 해당 thread 벡터 전체 + LangGraph state를 모두 정리."""
+    """세션 삭제: SQLite 행 + Qdrant의 해당 thread 벡터 전체 + LangGraph state를 모두 정리."""
     await _load_session(sessionId, current_user["id"])
 
     await session_store.delete_session(sessionId)
@@ -131,7 +131,7 @@ async def delete_message(
     Qdrant는 (질문 + 답변)을 point 1개로 저장하므로 삭제 단위도 '턴' 단위다.
     따라서 assistant 메시지를 지우면 짝이 되는 user 메시지도 함께 사라진다.
     세 저장소에서 동일하게 제거된다:
-      - Postgres : 같은 turn_id를 가진 메시지 행 전부
+      - SQLite : 같은 turn_id를 가진 메시지 행 전부
       - Qdrant   : turn_id에 해당하는 point
       - LangGraph: 해당 턴의 첫 메시지부터 그 이후 메시지까지 (중간 ToolMessage 포함)
     """
@@ -150,7 +150,7 @@ async def delete_message(
         request.app.state.chatbot_agent, sessionId, first_graph_id,
     )
 
-    # 2) Postgres에서 제거
+    # 2) SQLite에서 제거
     if turn_id:
         removed = await session_store.delete_turn(sessionId, turn_id)
     else:
@@ -199,7 +199,7 @@ async def branch_from_message(
     """
     선택한 메시지까지의 대화를 그대로 물려받는 새 세션(브랜치)을 만든다.
 
-    - Postgres : seq <= 기준 메시지의 seq 인 메시지를 새 session_id로 복사 (새 message id / 새 turn_id)
+    - SQLite : seq <= 기준 메시지의 seq 인 메시지를 새 session_id로 복사 (새 message id / 새 turn_id)
     - Qdrant   : 복사된 턴들의 point를 벡터·payload 그대로 복제하고 id와 thread_id만 새 값으로 교체
                  (임베딩 재호출 없음 → 비용 0, 검색 결과도 원본과 동일하게 재현)
     - LangGraph: 원본 thread의 state를 기준 메시지까지 잘라 새 thread로 복사
@@ -235,7 +235,7 @@ async def branch_from_message(
     message_id_map = {m["id"]: session_store.new_id() for m in kept}
 
     try:
-        # 1) Postgres 복사
+        # 1) SQLite 복사
         copied = await session_store.copy_messages_upto(
             src_session_id=sessionId,
             dst_session_id=new_session_id,
@@ -299,7 +299,7 @@ async def regenerate_message(
          (이전 답변과 그때 붙은 ToolMessage들을 제거, 요약 채널도 직전 체크포인트 값으로 복원)
       2. 같은 질문으로 그래프를 다시 1턴 실행한다. 이때 turn_id를 그대로 넘기므로
          save_conversation이 Qdrant의 같은 point를 새 내용으로 덮어쓴다.
-      3. Postgres의 assistant 행을 새 내용으로 UPDATE 한다 (id/seq 유지 → 대화 순서 불변)
+      3. SQLite의 assistant 행을 새 내용으로 UPDATE 한다 (id/seq 유지 → 대화 순서 불변)
     """
     owner_id = current_user["id"]
     await _load_session(sessionId, owner_id)
@@ -342,7 +342,7 @@ async def regenerate_message(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"재생성 중 오류가 발생했습니다: {describe_exception(e)}")
 
-    # 3) Postgres의 기존 답변 행을 덮어쓴다
+    # 3) SQLite의 기존 답변 행을 덮어쓴다
     updated = await session_store.update_assistant_message(
         session_id=sessionId,
         message_id=assistant_row["id"],
