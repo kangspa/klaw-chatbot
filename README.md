@@ -1,24 +1,18 @@
-# Docker 명령어 구성
+# KLaw — 개인 PC용 법률 보조 챗봇
 
-| 명령어 | 동작 설명 |
+설치·Docker 없이 **exe 하나**로 돈다. 실행하면 시스템 트레이에 아이콘이 생기고 브라우저가 열리며,
+트레이에서 **종료**하면 백그라운드에 남는 프로세스가 없다. 데이터는 `%LOCALAPPDATA%\KLaw` 한 곳에만 둔다.
+
+| 구성 요소 | 방식 (별도 서버 없음) |
 | --- | --- |
-| `docker compose up -d` | 멈춰있던 컨테이너를 그대로 재시작 (기존 이미지 재사용) |
-| `docker compose up -d --build` | `build` 지시가 있는 서비스만 재빌드 후 기동 |
-| `docker compose up -d --build --force-recreate` | 이미지 변경 사항이 없더라도 컨테이너를 강제로 재생성 |
-| `docker compose up -d --build --no-cache` | 빌드 캐시를 무시하고 처음부터 빌드 (Dockerfile 수정 시 캐시 문제 의심될 때 사용) |
-| `docker compose down -v` | 컨테이너와 함께 볼륨까지 제거 (**DB 데이터 완전 초기화 주의** ⚠️) |
+| 대화·설정 DB | SQLite (`data/klaw.db`, `api/db.py`) |
+| 대화 기억 벡터 | Qdrant 로컬 모드 (`data/qdrant`) |
+| 웹 검색 | ddgs 메타 검색 (DuckDuckGo·Yahoo·Google·Bing을 차례로) |
+| 법령 검색 | korean-law-mcp — 자식 프로세스(node.exe), `127.0.0.1` 임의 포트 |
+| 로컬 모델 | Ollama Windows 배포본 — 처음 쓸 때 마이 페이지에서 받는다 (`data/ollama`) |
+| 웹 크롤링 | Windows 기본 Edge (Playwright 브라우저를 따로 받지 않음) |
 
-- DB 데이터까지 날리기
-```bash
-docker compose down -v
-docker compose up -d --build --no-cache
-```
-
-- 이미지 재빌드 및 컨테이너 실행
-```bash
-docker compose down
-docker compose up -d --build
-```
+자식 프로세스(node·ollama)는 Windows **Job Object**에 묶여 있어, 앱이 정상 종료하든 강제 종료되든 함께 끝난다 (`api/services.py`).
 
 # API Request Body Sample
 
@@ -79,8 +73,8 @@ docker compose up -d --build
 
 | 저장소 | 역할 | 단위 |
 | --- | --- | --- |
-| **Postgres (users)** | 회원 정보 | 회원 1명 = 1행 |
-| **Postgres (chat_*)** | 사용자에게 그대로 보여줄 대화 원문 (진실 원본) | 메시지 1건 = 1행 |
+| **SQLite (users)** | 회원 정보 | 회원 1명 = 1행 |
+| **SQLite (chat_*)** | 사용자에게 그대로 보여줄 대화 원문 (진실 원본) | 메시지 1건 = 1행 |
 | **Qdrant** | AI가 과거 대화를 의미 검색하기 위한 벡터 | 대화 1턴(질문+답변) = 1 point |
 | **LangGraph checkpointer** | 진행 중인 대화의 실행 상태 (MemorySaver, 서버 재시작 시 휘발) | thread 1개 = 세션 1개 |
 
@@ -101,14 +95,14 @@ docker compose up -d --build
 | `POST` | `/chatbot/sessions` | 세션 생성 `{ title? }` |
 | `GET` | `/chatbot/sessions/{sessionId}` | 세션 + 메시지 전체 |
 | `PATCH` | `/chatbot/sessions/{sessionId}` | 제목 변경 `{ title }` |
-| `DELETE` | `/chatbot/sessions/{sessionId}` | 세션 삭제 (Postgres 행 + Qdrant thread 벡터 전체 + state) |
+| `DELETE` | `/chatbot/sessions/{sessionId}` | 세션 삭제 (DB 행 + Qdrant thread 벡터 전체 + state) |
 | `DELETE` | `/chatbot/sessions/{sessionId}/messages/{messageId}` | **① 삭제** |
 | `POST` | `/chatbot/sessions/{sessionId}/messages/{messageId}/branch` | **② 브랜치** `{ title? }` |
 | `POST` | `/chatbot/sessions/{sessionId}/messages/{messageId}/regenerate` | **③ 다시 실행** `{ isotime?, model? }` |
 
 세 버튼이 각 저장소에 적용되는 범위
 
-| 버튼 | Postgres | Qdrant | LangGraph state |
+| 버튼 | SQLite | Qdrant | LangGraph state |
 | --- | --- | --- | --- |
 | **① 삭제** | 같은 `turn_id`의 질문+답변 행 삭제 | 해당 `turn_id` point 삭제 | 그 턴의 첫 메시지부터 이후 전부 제거 (중간 ToolMessage 포함) |
 | **② 브랜치** | 기준 메시지까지를 새 `session_id`로 복사 (새 id / 새 `turn_id`) | 원본 point를 벡터·payload 그대로 복제, id와 `thread_id`만 교체 (임베딩 재호출 없음) | 기준 메시지까지 잘라 새 thread로 복사 |
@@ -117,30 +111,34 @@ docker compose up -d --build
 > ① 삭제가 턴 단위인 이유: Qdrant는 질문+답변을 point 1개로 저장하므로, 답변만 지우면 벡터에 반쪽짜리 기록이 남는다.
 > 따라서 답변을 지우면 짝이 되는 질문도 함께 사라진다 (프론트에서 확인 다이얼로그로 안내).
 
-# 실행 전 준비
+# 실행 전 준비 (개발)
 
 ```bash
-docker compose up -d      # postgres / qdrant / searxng / korean-law-mcp / ollama
-uv run python scripts/setup_local_llm.py --apply --pull   # 로컬 모델 GPU 가속 자동 구성 + 모델 받기 (선택)
-uv sync                   # asyncpg, pyjwt 등 의존성 설치
-uv run main.py            # 서버 기동 (startup에서 테이블·Qdrant 컬렉션 자동 생성)
+uv sync
+git submodule update --init
+cd korean-law-mcp && npm ci --omit=optional --ignore-scripts && npm run build && cd ..   # 법령 MCP (처음 1회)
+uv run main.py            # 서버 기동 — 법령 MCP 자식 프로세스 시작, DB 테이블·Qdrant 컬렉션 자동 생성
 
 cd vite-project && npm run dev   # 프론트 (http://localhost:5173)
 ```
 
-`.env` 필수 항목
+개발 중에는 저장소 폴더가 앱 폴더(HOME)다 (`data/`·`logs/`·`.runtime/`가 저장소 안에 생긴다, git 제외).
+트레이 앱 흐름은 `uv run python launcher.py`로 시험한다.
+
+`.env` 항목 (모두 선택 — API 키는 화면의 API 키 페이지에서 넣어도 된다)
 
 | 변수 | 설명 |
 | --- | --- |
-| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | `docker-compose.yml`의 postgres 서비스와 값이 일치해야 한다 |
 | `GOOGLE_CLIENT_ID` | (선택) Google OAuth 웹 클라이언트 ID. 비어 있어도 앱은 그대로 쓰고, 마이 페이지의 Google 계정 연결만 안내 문구로 바뀐다 |
 | `ANNEX_OCR_ENABLED` | 이미지 기반 별표(PDF) 응답을 PaddleOCR로 텍스트화하는 후처리. 기본 켜짐, `0`이면 끔 |
 | `CHAT_FALLBACK_MODELS` | 기본 모델 실패(429 등) 시 순차 폴백할 모델 목록 (쉼표 구분, 선택). DB에 등록·활성화된 모델만 사용 |
 | `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | 각 클라우드 모델 호출용. Gemini 키는 임베딩(대화 기억)에도 쓰이므로 필수 |
+| `LAW_OC` | 법제처 Open API 인증값 (법령 검색). 바꾸면 법령 MCP를 다시 띄운다 |
 | `LLM_REQUEST_TIMEOUT` | 클라우드 모델 요청 타임아웃(초). 기본 300. 초과 시 재시도·폴백 |
 | `LLM_REGISTRY_TTL` | DB 모델 목록을 다시 읽는 주기(초). 기본 30 |
-| `MCP_AUTH_TOKEN` | korean-law-mcp 접근 토큰. docker-compose가 컨테이너에 주입하고 앱이 Bearer 헤더로 보낸다 (**필수** — 없으면 compose가 기동을 거부) |
 | `CRAWL_MAX_CHARS` | `page_crawl4ai` 결과 최대 길이(자). 기본 6000 — 페이지 전체를 넘기면 호출당 수만 토큰이 된다 |
+
+예전 Docker 구성의 `DB_*`·`MCP_AUTH_TOKEN`·`OLLAMA_VERSION` 등은 더 이상 쓰지 않는다 (법령 MCP 토큰은 실행마다 새로 만든다).
 
 ## LLM 게이트웨이 (`api/llm_gateway`)
 
@@ -161,9 +159,9 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
 버전의 내장 가격표 사용), 캐시 토큰 할인과 장문 입력 구간 단가까지 반영한다. 새 모델·가격 변경을 직접 관리할
 필요가 없다. 가격표에 없는 유료 모델은 0으로 집계하고 경고 로그를 남기며, 로컬 런타임은 0원이다.
 
-### 모델 목록 관리 (Postgres)
+### 모델 목록 관리 (SQLite)
 
-호출 가능한 모델 목록은 Postgres의 `llm_models` 테이블에서 관리한다.
+호출 가능한 모델 목록은 SQLite의 `llm_models` 테이블에서 관리한다.
 서버는 이 목록을 `LLM_REGISTRY_TTL`초(기본 30)마다 다시 읽으므로 **DB를 고치면 재시작·재빌드 없이 반영**된다.
 
 - API로 받은 `model` 값은 DB에 등록·활성화된 모델만 허용한다 (아니면 400). 비우면 `is_default` 모델.
@@ -185,7 +183,7 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
     탭의 **기본 모델 복원**으로 되살린다. 기본 모델(`is_default`)은 지울 수 없다.
   - 회사 API 키(`GEMINI_API_KEY` 등)가 `.env`에 없으면 탭에 경고를 띄운다.
 - **Ollama 탭**: 등록된 Ollama 모델의 다운로드·삭제. 로컬 런타임은 Ollama만 쓰고, **이 PC에서 도는 모델만** 쓴다
-  (컨테이너에 `OLLAMA_NO_CLOUD=1` — 클라우드 모델 실행이 막히고, 커스텀 모델 추가에서도 `…-cloud` 태그를 거부한다).
+  (엔진 실행 환경에 `OLLAMA_NO_CLOUD=1` — 클라우드 모델 실행이 막히고, 커스텀 모델 추가에서도 `…-cloud` 태그를 거부한다).
 - Hugging Face **클라우드 추론(Inference Providers)은 지원하지 않는다**. 호출 계층에 `huggingface/` 접두사가 없어
   그런 모델 ID는 등록·호출 단계에서 거부된다. HF는 모델 **다운로드** 인증에만 쓴다 (아래 API 키 관리).
 - 아직 받지 않은 로컬 모델로 채팅하면 `400 "… 마이 페이지 > 모델 설정에서 다운로드하세요."`를 돌려준다.
@@ -234,7 +232,7 @@ LangGraph 노드에서 `ainvoke` / `bind_tools` / `with_structured_output`을 �
 | --- | --- |
 | OpenAI · Gemini · Anthropic | 바로 (LiteLLM이 호출마다 환경 변수를 읽는다) |
 | Hugging Face (`HF_TOKEN`) | 바로 — 모델 **다운로드** 인증(`huggingface_hub`, 예: 법령 별표 OCR 모델)에만 쓰고 호출에는 쓰지 않는다. 예전 이름(`HUGGINGFACEHUB_API_TOKEN` — huggingface_hub가 읽지 않는다)이면 저장할 때 `HF_TOKEN`으로 옮긴다 |
-| `LAW_OC` | korean-law-mcp 컨테이너를 다시 만들고 '민법' 검색으로 인증 확인. docker-compose 필수 값이라 삭제는 막는다 |
+| `LAW_OC` | 법령 MCP 자식 프로세스를 다시 띄우고 '민법' 검색으로 인증 확인. 법령 검색 필수 값이라 삭제는 막는다 |
 
 연결 확인은 토큰을 쓰지 않는 요청만 보낸다 (모델 목록·계정 조회: OpenAI `/v1/models`, Gemini `models`, Anthropic `/v1/models`,
 HF `whoami-v2`, LAW_OC는 법령 검색).
@@ -258,20 +256,19 @@ uv run python scripts/sync_llm_models.py           # JSON의 모델 추가·갱�
 uv run python scripts/sync_llm_models.py --prune   # JSON에 없는 모델까지 삭제
 ```
 
-### 로컬 모델 (Docker Ollama)
+### 로컬 모델 (Ollama 엔진)
 
-로컬 모델은 다른 서비스와 마찬가지로 Docker 컨테이너(`ollama`, 포트 11434)로 띄운다.
-이미지는 `docker/ollama/Dockerfile` — Ollama + CUDA·Vulkan 백엔드 + Mesa 드라이버(ANV/RADV/Dozen)를
-버전 고정으로 담은 단일 이미지다.
+Ollama는 exe에 넣지 않는다 (Windows 배포본이 CUDA 라이브러리 포함 약 1.6GB). 마이 페이지 **런타임 버전**에서
+**Ollama 엔진 설치**를 누르면 GitHub 릴리스의 `ollama-windows-amd64.zip`을 받아 SHA-256을 확인하고
+`data/ollama/engine/<버전>/`에 푼 뒤(압축 파일은 바로 지움) 자식 프로세스(`ollama serve`)로 띄운다.
 
-**Ollama 버전**은 루트 `.env`의 `OLLAMA_VERSION` / `OLLAMA_SHA256`(없으면 0.34.4)으로 정해지고, 이미지는
-`klaw-ollama:<버전>` 태그로 버전마다 따로 남는다. 마이 페이지 **런타임 버전**의 Ollama 줄에서 버전을 고르면 서버가
-GitHub 릴리스의 SHA-256을 확인 → 이미지 빌드 → 컨테이너 재시작 → 버전·GPU 인식 확인까지 하고, 성공하면 두 값을 `.env`에 적는다.
-확인에 실패하면(응답 없음, 이전엔 잡히던 GPU를 못 잡음 등) 이전 버전 이미지로 자동으로 되돌린다. 받아 둔 모델은 볼륨에 있어 그대로 남는다.
-최신 모델 중에는 새 Ollama가 필요한 것이 있다 (예: `lfm3-omni:2b`는 0.34.4에서 받을 수 없다).
-백엔드가 docker CLI가 있는 호스트에서 실행되어야 한다 (개인 PC 사용 전제 — 별도 권한 확인 없음).
+- **모델·키 위치**: 모델은 `data/ollama/models`, Ollama가 사용자 폴더에 쓰는 키(`~/.ollama`)는 `data/ollama/home` — 사용자 폴더를 건드리지 않는다.
+- **GPU**: 배포본에 CUDA·ROCm·Vulkan 백엔드가 들어 있어 Ollama가 스스로 고른다. 결과는 엔진 로그(`logs/ollama.log`, 실행마다 새로 씀)의 장치 감지 줄로 확인해 화면에 보여준다.
+- **버전 변경**: 같은 카드에서 버전을 고르면 새 엔진을 받아 다시 띄우고 버전·GPU 인식을 확인한다. 성공하면 이전 엔진 폴더를 지우고, 실패하면(응답 없음, 이전엔 잡히던 GPU를 못 잡음 등) 이전 버전으로 되돌린다. 받은 모델은 그대로 남는다.
+- **디스크 비우기**: **엔진 삭제**(모델은 남김) / **엔진·모델 모두 삭제**.
+- 최신 모델 중에는 새 Ollama가 필요한 것이 있다 (예: `lfm3-omni:2b`는 0.34.4에서 받을 수 없다).
 
-**LiteLLM 버전**도 같은 카드에서 바꾼다. LiteLLM은 백엔드가 직접 쓰는 패키지라 순서가 다르다:
+**LiteLLM 버전**도 같은 카드에서 바꾼다 (개발 실행에서만 — exe에서는 패키지가 실행 파일에 묶여 있어 잠긴다). LiteLLM은 백엔드가 직접 쓰는 패키지라 순서가 다르다:
 
 1. 별도 가상환경에서 호환성 확인 (`scripts/check_litellm_compat.py` — 도구 호출 경로, LangChain 연동, 등록 모델 단가).
    지금 설치된 `mcp`·`langchain-litellm` 버전으로 묶어 확인하므로, 1.106+처럼 mcp 2.3이 필요한 버전은 여기서 걸러진다.
@@ -286,29 +283,7 @@ Ollama와 LiteLLM을 함께 바꾸면 **LiteLLM 호환성 확인 → Ollama 변�
 (LiteLLM이 안 맞으면 아무것도 바꾸지 않고, Ollama가 실패하면 LiteLLM은 건드리지 않는다). 둘 다 새 버전이 있으면
 카드 위에 **한 번에 업데이트** 버튼이 나온다.
 
-GPU 가속은 호스트마다 컨테이너에 넘길 장치가 달라서, **설정 스크립트가 호스트를 감지해
-`docker-compose.override.yml`(docker compose가 자동 병합, git 제외)을 만든다.**
-
-| 감지 결과 | 컨테이너 설정 | Ollama 백엔드 |
-| --- | --- | --- |
-| NVIDIA GPU | GPU 예약 (NVIDIA Container Toolkit) | CUDA |
-| Windows Docker Desktop(WSL2) + Intel/AMD GPU | `/dev/dxg` + `/usr/lib/wsl` 마운트 | Vulkan on D3D12 (Mesa Dozen) |
-| Linux + `/dev/dri` | `/dev/dri` 전달 | Vulkan (Mesa ANV/RADV) |
-| GPU 없음 / macOS | 없음 | CPU |
-
-내장 GPU는 Ollama가 기본으로 제외하므로 NVIDIA가 아닌 경로에서는 `OLLAMA_IGPU_ENABLE=1`을 함께 켠다.
-
-```bash
-uv run python scripts/setup_local_llm.py --apply --pull --verify
-#  감지 → override 생성 → 컨테이너 빌드·재생성 → DB의 활성 로컬 모델 받기 → 가벼운 모델로 GPU 사용률 확인
-```
-
-서버 시작 시에도 로컬 모델 상태(컨테이너 응답·모델 누락·가속 장치)를 점검해 로그(`[local-llm]`)로 알린다.
-받은 모델은 Docker 볼륨 `klaw-chatbot_ollama_models`에 저장된다. Windows 폴더 바인드 마운트는 쓰지 않는다 —
-Docker Desktop에서 GPU 버퍼로 모델을 읽을 때 `read error: Bad address`로 로드가 실패하기 때문이다.
-
-LM Studio / vLLM으로 띄울 경우 DB(또는 seed JSON)의 모델 ID를 `lmstudio/<모델명>`, `vllm/<모델명>`으로
-등록하면 된다 (모델명은 각 서버의 `/v1/models` 응답 기준).
+서버 시작 시에도 로컬 모델 상태(엔진 응답·모델 누락·가속 장치)를 점검해 로그(`[local-llm]`)로 알린다.
 
 ## korean-law-mcp (git 서브모듈)
 
@@ -321,7 +296,7 @@ git submodule update --init
 
 # 새 버전으로 올리기 (pull 대신 사용)
 git submodule update --remote korean-law-mcp        # 원격 main 최신 커밋으로 이동
-docker compose up -d --build korean-law-mcp         # 새 코드로 컨테이너 재빌드
+(cd korean-law-mcp && npm ci --omit=optional --ignore-scripts && npm run build)   # 새 코드로 빌드
 uv run python scripts/check_mcp_tools.py            # 도구 변경·호환성 점검 (문제 있으면 종료 코드 1)
 #   → 문제 없으면 스냅샷 갱신 후 서브모듈 커밋과 함께 커밋
 uv run python scripts/check_mcp_tools.py --update
@@ -329,7 +304,7 @@ git add korean-law-mcp scripts/mcp_tools_snapshot.json && git commit -m "korean-
 
 # 되돌리기 (기록된 커밋으로 복귀)
 git submodule update korean-law-mcp
-docker compose up -d --build korean-law-mcp
+(cd korean-law-mcp && npm ci --omit=optional --ignore-scripts && npm run build)
 ```
 
 `check_mcp_tools.py`는 도구 이름·인자·설명의 변경과, 앱이 의존하는 부분(`search_law`의 `query` 인자,
@@ -351,23 +326,26 @@ docker compose up -d --build korean-law-mcp
   실행 디바이스는 런타임에 동적 결정 — CUDA 지원 paddlepaddle + GPU가 보이면 GPU, 아니면 CPU.
   GPU 서버에서는 `paddlepaddle-gpu`만 별도 설치하면 코드 수정 없이 GPU로 동작한다.
 
-Postgres 연결에 실패하면 서버는 뜨지만 `/auth/*` 와 `/chatbot/*` 는 503을 반환한다 (서버 로그의 `[Postgres]` 항목 확인).
+DB(SQLite)를 열지 못하면 서버는 뜨지만 `/auth/*` 와 `/chatbot/*` 는 503을 반환한다 (서버 로그의 `[DB]` 항목 확인).
 
 # 저장소 완전 초기화
 
-회원 체계가 바뀌었거나 데이터를 통째로 비우고 싶을 때 사용한다.
+데이터를 통째로 비우고 싶을 때 사용한다. **앱을 끈 뒤** 실행한다 (Qdrant 로컬 폴더는 한 프로세스만 열 수 있다).
 
 ```bash
 uv run python scripts/reset_db.py         # 확인 프롬프트 후 실행
 uv run python scripts/reset_db.py --yes   # 확인 없이 실행
 ```
 
-- Postgres: `users` / `chat_sessions` / `chat_messages` DROP 후 재생성
+- SQLite: 사용자·세션·메시지·사용량 기록 삭제 (모델 목록은 남김)
 - Qdrant: `conversation_history` 컬렉션 삭제 (서버 startup에서 자동 재생성)
 - LangGraph 상태(MemorySaver)는 서버를 재시작하면 함께 비워진다
+
+앱을 완전히 지우려면 `%LOCALAPPDATA%\KLaw` 폴더(개발: 저장소의 `data/`·`logs/`·`.runtime/`)를 지우면 된다.
+
 # 데스크톱 exe (시스템 트레이 앱)
 
-개인 PC에서 더블클릭으로 쓰는 배포 형태. 콘솔 창 없이 트레이 아이콘으로 돌고, 실행하면 브라우저가 열린다.
+개인 PC에서 더블클릭으로 쓰는 배포 형태. **설치할 것이 없다** (Docker·Python·Node 불필요). 콘솔 창 없이 트레이 아이콘으로 돌고, 실행하면 브라우저가 열린다.
 
 ```bash
 uv run python scripts/build_exe.py             # dist/KLaw.exe (exe 하나, 콘솔 창 없음)
@@ -375,24 +353,24 @@ uv run python scripts/build_exe.py --onedir    # dist/KLaw/ (폴더 — 시작�
 uv run python scripts/build_exe.py --console   # 로그를 콘솔로 보는 확인용 빌드
 ```
 
-- **필요한 것**: 실행 PC에 Docker Desktop (Postgres·Qdrant·SearXNG·korean-law-mcp·Ollama는 컨테이너로 돈다).
-  꺼져 있으면 exe가 켜고 기다린다. 없으면 트레이 메뉴에 설치 페이지 링크가 뜬다.
-- **트레이 메뉴**: 열기(아이콘 클릭 기본 동작) / 로그 폴더 열기 / 종료(웹 서버와 컨테이너를 모두 멈춘다).
+빌드 순서: 화면 빌드 → node.exe(nodejs.org 22 LTS, SHA-256 확인, `build/node`에 캐시) → 법령 MCP 컴파일·운영 의존성만(`build/law_mcp`) → PyInstaller. 빌드하는 PC에만 Node.js·npm이 필요하다.
+
+- **트레이 메뉴**: 열기(아이콘 클릭 기본 동작) / 데이터 폴더 열기 / 종료(웹 서버와 자식 프로세스를 모두 내린다).
   exe를 다시 실행하면 새로 뜨지 않고 이미 떠 있는 화면을 연다 (중복 실행 방지).
-- **데이터·설정 위치**: `%LOCALAPPDATA%\KLaw` (`.env`, DB·벡터 데이터, 로그 `logs\klaw.log`).
-  첫 실행 때 DB 비밀번호·MCP 토큰을 무작위로 만든다. API 키와 `LAW_OC`는 화면의 API 키 페이지에서 넣는다.
-- **포트 충돌 방지**: 모든 포트는 `127.0.0.1`에만 열린다. 기본 포트(웹 8008, Postgres 5432, Qdrant 6333/6334,
-  SearXNG 8888, MCP 3000, Ollama 11434)가 다른 프로그램에 쓰이고 있으면 빈 포트를 골라 `.env`의 `KLAW_PORT_*`에 기억하고,
-  다음 실행부터 같은 포트를 쓴다. 컨테이너 이름도 compose 프로젝트(`klaw`)로 구분돼 다른 컨테이너와 겹치지 않는다.
-- **exe에서 안 되는 것**: LiteLLM 버전 변경 (파이썬 패키지가 exe 안에 묶여 있다 — 새 exe로 바꿔야 한다). Ollama 버전 변경은 된다.
-- **웹 크롤링**: exe에는 Playwright 브라우저를 넣지 않고, Windows 기본 Edge를 쓴다.
+- **깔끔한 종료**: 법령 MCP(node)·Ollama와 그 모델 실행 프로세스는 Job Object에 묶여, exe가 작업 관리자로 강제 종료돼도 OS가 함께 끝낸다.
+  exe 하나 빌드가 실행 중에 풀어 두는 임시 폴더(`%TEMP%\_MEI…`)도 종료할 때 지워진다.
+- **데이터·설정 위치**: `%LOCALAPPDATA%\KLaw` (`.env`, `data\`(DB·벡터·Ollama), `logs\`). 이 폴더를 지우면 PC에 남는 것이 없다.
+  API 키와 `LAW_OC`는 화면의 API 키 페이지에서 넣는다.
+- **포트 충돌 방지**: 모든 포트는 `127.0.0.1`에만 열린다. 웹 UI(기본 8008)가 쓰이고 있으면 빈 포트를 골라 `.env`의 `KLAW_PORT_WEB`에 기억한다.
+  법령 MCP·Ollama는 실행할 때마다 빈 포트를 고른다 (기본 39300·39301) — PC에 이미 설치된 Ollama(11434)와도 겹치지 않는다.
+- **exe에서 안 되는 것**: LiteLLM 버전 변경 (새 exe로 바꿔야 한다). Ollama 엔진 설치·버전 변경은 된다.
 - **Google 계정 연결**: Google Cloud Console의 승인된 JavaScript 원본에 `http://127.0.0.1:8008`을 추가해야 한다
   (웹 포트가 바뀌었다면 그 포트로).
 
 | 환경 변수 | 기본값 | 용도 |
 | --- | --- | --- |
 | `KLAW_HOME` | exe: `%LOCALAPPDATA%\KLaw`, 개발: 저장소 | 데이터·설정 폴더 |
-| `KLAW_PROJECT` | exe: `klaw`, 개발: `klaw-chatbot` | compose 프로젝트 이름 (컨테이너 이름 앞부분) |
-| `KLAW_PORT_*` | 위 기본 포트 | 포트 고정 (자동으로 기록되기도 한다) |
+| `KLAW_PORT_WEB` | `8008` | 웹 UI 포트 (사용 중이면 자동으로 골라 기록) |
+| `KLAW_PORT_LAW_MCP` / `KLAW_PORT_OLLAMA` | 비어 있으면 실행마다 선택 | 자식 프로세스 포트 고정 |
 | `KLAW_NO_BROWSER` | — | `1`이면 실행할 때 브라우저를 열지 않는다 |
-| `KLAW_STOP_ON_EXIT` | `1` | `0`이면 종료해도 컨테이너를 켜둔다 |
+| `KLAW_DB_PATH` | `data\klaw.db` | SQLite 파일 위치 |

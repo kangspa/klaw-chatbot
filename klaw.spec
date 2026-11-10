@@ -4,10 +4,12 @@ PyInstaller 빌드 설정 — scripts/build_exe.py가 부른다 (직접: uv run 
 
   KLAW_BUILD_MODE     onefile(기본: exe 하나) | onedir(폴더 — 시작이 빠르고 디버깅이 쉽다)
   KLAW_BUILD_CONSOLE  1이면 콘솔 창을 띄운다 (빌드 확인용). 기본은 창 없음
-  KLAW_STACK_BUNDLE   서비스 정의 묶음 폴더 (build_exe.py가 만든다: compose·Dockerfile·korean-law-mcp 소스·searxng 설정)
+  KLAW_NODE_BUNDLE    node.exe가 든 폴더 (build_exe.py가 nodejs.org 배포본에서 꺼내 둔다)
+  KLAW_LAW_MCP_BUNDLE 빌드된 korean-law-mcp (build/·운영용 node_modules·package.json)
 
-exe에 들어가는 것: 실행기(launcher.py) + 백엔드(main·api) + 파이썬 의존성 + 빌드된 화면(frontend) + 서비스 정의(stack)
-+ 아이콘. 서비스(Postgres·Qdrant·SearXNG·법령 MCP·Ollama)는 Docker Desktop에서 컨테이너로 돈다.
+exe에 들어가는 것: 실행기(launcher.py) + 백엔드(main·api) + 파이썬 의존성 + 빌드된 화면(frontend) + node.exe
++ 법령 MCP 서버 + 아이콘. 설치·Docker가 필요 없다: DB는 SQLite, 벡터는 Qdrant 로컬 모드, 웹 검색은 ddgs,
+법령 MCP는 자식 프로세스(node.exe). Ollama 엔진(1.6GB)은 넣지 않고 로컬 모델을 쓸 때 마이 페이지에서 받는다.
 """
 import os
 from pathlib import Path
@@ -17,11 +19,13 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 ROOT = Path(SPECPATH)
 MODE = os.getenv("KLAW_BUILD_MODE", "onefile")
 CONSOLE = os.getenv("KLAW_BUILD_CONSOLE") == "1"
-STACK = Path(os.getenv("KLAW_STACK_BUNDLE", ROOT / "build" / "stack_bundle"))
+NODE = Path(os.getenv("KLAW_NODE_BUNDLE", ROOT / "build" / "node"))
+LAW_MCP = Path(os.getenv("KLAW_LAW_MCP_BUNDLE", ROOT / "build" / "law_mcp"))
 
 datas = [
     (str(ROOT / "vite-project" / "dist"), "frontend"),
-    (str(STACK), "stack"),
+    (str(NODE), "node"),
+    (str(LAW_MCP), "law_mcp"),
     (str(ROOT / "assets"), "assets"),
     (str(ROOT / "api" / "llm_gateway" / "seed_models.json"), "api/llm_gateway"),
 ]
@@ -32,7 +36,7 @@ hiddenimports = ["main"] + collect_submodules("api") + collect_submodules("uvico
 for pkg in [
     "litellm", "tiktoken", "tiktoken_ext", "tokenizers",
     "langchain_litellm", "langchain_core", "langchain_community", "langgraph", "langchain_mcp_adapters", "mcp",
-    "qdrant_client", "grpc", "asyncpg",
+    "qdrant_client", "grpc", "portalocker", "aiosqlite", "ddgs", "primp", "lxml",
     "crawl4ai", "playwright", "patchright", "fake_useragent",
     "paddle", "paddleocr", "paddlex", "cv2", "pymupdf", "fitz",
     "pystray", "PIL",
