@@ -23,7 +23,9 @@ from jwt import PyJWKClient
 
 dotenv.load_dotenv()
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+# .env 값이 우선, 없으면 exe에 넣어 둔 기본값 (클라이언트 ID는 공개값 — Client Secret은 쓰지 않는다)
+from api.stack import app_default  # noqa: E402
+GOOGLE_CLIENT_ID = (os.getenv("GOOGLE_CLIENT_ID") or app_default("GOOGLE_CLIENT_ID")).strip()
 
 JWKS_URI = "https://www.googleapis.com/oauth2/v3/certs"
 VALID_ISSUERS = ("accounts.google.com", "https://accounts.google.com")

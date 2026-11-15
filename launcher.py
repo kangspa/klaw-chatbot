@@ -126,7 +126,7 @@ def acquire_single_instance() -> bool:
 def open_existing_instance() -> None:
     try:
         port = json.loads(INSTANCE_FILE.read_text(encoding="utf-8"))["port"]
-        webbrowser.open(f"http://127.0.0.1:{port}/")
+        webbrowser.open(f"http://localhost:{port}/")
     except Exception:
         pass
 
@@ -165,7 +165,10 @@ class DesktopApp:
 
     @property
     def url(self) -> str:
-        return f"http://127.0.0.1:{self.port}/"
+        # 화면 주소는 localhost — Google 로그인 버튼(GIS)은 127.0.0.1 출처를 등록해 둬도 거절한다.
+        # 서버는 127.0.0.1에만 열리고, localhost가 ::1로 먼저 풀려도 브라우저가 127.0.0.1로 이어 붙는다
+        # (다른 프로그램이 ::1의 같은 포트를 쓰면 stack.port_free가 그 포트를 건너뛴다).
+        return f"http://localhost:{self.port}/"
 
     # 트레이 메뉴
     def open_browser(self, *_):

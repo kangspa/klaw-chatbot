@@ -60,6 +60,19 @@ for _env, _path in {
     os.environ.setdefault(_env, str(_path))
 
 
+# ────────────────────────── 배포 기본값 ──────────────────────────
+def app_default(name: str) -> str:
+    """
+    exe에 넣어 둔 기본값 (scripts/build_exe.py가 app_defaults.json으로 만든다). 예: GOOGLE_CLIENT_ID —
+    공개값이라 exe에 넣어도 되며, 받아서 쓰는 사람이 따로 설정하지 않아도 Google 연결이 된다. .env 값이 항상 우선.
+    """
+    import json
+    try:
+        return str(json.loads((BUNDLE / "app_defaults.json").read_text(encoding="utf-8")).get(name) or "")
+    except (OSError, ValueError):
+        return ""
+
+
 # ────────────────────────── 포트 ──────────────────────────
 def _someone_listening(p: int) -> bool:
     for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):

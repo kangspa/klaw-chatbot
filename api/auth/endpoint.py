@@ -44,7 +44,9 @@ async def get_auth_config():
     (클라이언트 ID는 비밀값이 아니며 브라우저에 노출되는 것이 정상이다)
     """
     from api.stack import WEB_PORT_CANDIDATES
-    origins = [f"http://{h}:{p}" for p in WEB_PORT_CANDIDATES for h in ("127.0.0.1", "localhost")] + ["http://localhost:5173"]
+    # 앱은 http://localhost:<포트>로 열린다 (GIS 버튼은 127.0.0.1 출처를 받지 않는다). 127.0.0.1로 직접 연 경우도 Drive 백업은 된다
+    origins = ([f"http://localhost:{p}" for p in WEB_PORT_CANDIDATES] + ["http://localhost", "http://localhost:5173"]
+               + [f"http://127.0.0.1:{p}" for p in WEB_PORT_CANDIDATES])
     return AuthConfigResponse(googleClientId=google.GOOGLE_CLIENT_ID or None, configured=google.is_configured(),
                               allowedOrigins=origins)
 

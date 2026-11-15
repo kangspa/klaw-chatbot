@@ -428,8 +428,10 @@ uv run python scripts/build_exe.py --console   # 로그를 콘솔로 보는 확�
   '사용 중' 판단은 묶어 보기 + `127.0.0.1`·`::1` 접속 시도 — 다른 프로그램이 IPv6에만 떠 있어도 잡아낸다.
   법령 MCP·Ollama는 기본 39300·39301, 쓰이면 아무 빈 포트. 개발 중 Vite 프록시는 `.runtime/web_port`를 요청마다 읽어 백엔드 포트를 따라간다.
 - **업데이트**: Ollama 엔진과 LiteLLM 모두 exe 안에서 마이 페이지 버튼으로 올린다 (다시 빌드하지 않는다). 새 LiteLLM이 exe에 없는 패키지를 요구하면 그때만 새 exe가 필요하다.
-- **Google 계정 연결**: Google Cloud Console의 OAuth 클라이언트 → 승인된 JavaScript 원본에 웹 포트 후보 주소를 모두 등록한다:
-  `http://127.0.0.1:8008` ~ `http://127.0.0.1:8012` (개발용 `http://localhost:5173`도). 어느 후보가 잡혀도 연결된다.
+- **Google 계정 연결**: 앱은 화면을 `http://localhost:<포트>`로 연다 (Google 로그인 버튼은 `127.0.0.1` 출처를 등록해도 거절한다).
+  Google Cloud Console의 OAuth 클라이언트 → 승인된 JavaScript 원본에 `http://localhost`와 `http://localhost:8008` ~ `http://localhost:8012`를 등록한다
+  (개발용 `http://localhost:5173`도). `GOOGLE_CLIENT_ID`는 빌드할 때 exe에 기본값으로 들어간다 (`build/app_defaults.json`, `.env` 값이 우선) —
+  공개값이라 넣어도 안전하며(Client Secret은 쓰지 않음), exe를 받은 사람도 따로 설정하지 않고 Google 연결·Drive 백업을 쓸 수 있다.
 
 | 환경 변수 | 기본값 | 용도 |
 | --- | --- | --- |

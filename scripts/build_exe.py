@@ -15,6 +15,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -80,6 +81,33 @@ def build_law_mcp(npm: str) -> None:
     print(f"법령 MCP: {LAW_MCP_DIR} ({size:.0f} MB)")
 
 
+DEFAULTS_FILE = ROOT / "build" / "app_defaults.json"
+CLIENT_ID_RE = re.compile(r"^\d+-[a-z0-9]+\.apps\.googleusercontent\.com$")
+
+
+def write_app_defaults() -> None:
+    """
+    exe에 넣을 공개 기본값. GOOGLE_CLIENT_ID는 비밀이 아니다(브라우저에 그대로 노출되는 값, Client Secret은 쓰지 않음) —
+    넣어 두면 exe를 받은 사람도 따로 설정하지 않고 Google 계정 연결·Drive 백업을 쓸 수 있다.
+    값: 환경 변수 KLAW_GOOGLE_CLIENT_ID → 저장소 .env의 GOOGLE_CLIENT_ID. 없으면 넣지 않는다 (Google 연결만 꺼진다).
+    """
+    cid = os.getenv("KLAW_GOOGLE_CLIENT_ID", "").strip()
+    env = ROOT / ".env"
+    if not cid and env.exists():
+        m = re.search(r"^GOOGLE_CLIENT_ID=(.*)$", env.read_text(encoding="utf-8"), re.M)
+        cid = m.group(1).strip().strip("\"'") if m else ""
+    defaults = {}
+    if cid:
+        if not CLIENT_ID_RE.match(cid):
+            raise RuntimeError("GOOGLE_CLIENT_ID 형식이 아닙니다 (<숫자>-<문자>.apps.googleusercontent.com).")
+        defaults["GOOGLE_CLIENT_ID"] = cid
+        print(f"GOOGLE_CLIENT_ID 포함 (프로젝트 번호 {cid.split('-')[0]})")
+    else:
+        print("GOOGLE_CLIENT_ID 없음 — exe에서 Google 연결은 사용자가 .env로 넣어야 합니다")
+    DEFAULTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    DEFAULTS_FILE.write_text(json.dumps(defaults, ensure_ascii=False), encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="KLaw 데스크톱 exe 빌드")
     parser.add_argument("--onedir", action="store_true", help="exe 하나 대신 폴더로 빌드")
@@ -108,6 +136,9 @@ def main() -> int:
     fetch_node(NODE_DIR)
     step("법령 MCP 빌드 → build/law_mcp")
     build_law_mcp(npm)
+
+    step("배포 기본값 (build/app_defaults.json)")
+    write_app_defaults()
 
     step("PyInstaller")
     env = {**os.environ, "KLAW_BUILD_MODE": "onedir" if args.onedir else "onefile",
