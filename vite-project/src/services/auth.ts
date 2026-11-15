@@ -15,6 +15,13 @@ export async function fetchGoogleClientId(): Promise<string | null> {
   return data.configured ? data.googleClientId : null
 }
 
+/** 지금 주소가 Google 연결용으로 등록해 두는 주소인지 (아니면 다른 프로그램 때문에 임시 포트로 열린 것) */
+export async function isGoogleOriginExpected(): Promise<{ ok: boolean; origins: string[] }> {
+  const data = await apiFetch<{ allowedOrigins?: string[] }>('/auth/config')
+  const origins = data.allowedOrigins ?? []
+  return { ok: origins.length === 0 || origins.includes(window.location.origin), origins }
+}
+
 /** GET /auth/me — 현재(로컬) 사용자와 Google 연결 여부 */
 export async function fetchMe(): Promise<User> {
   return (await apiFetch<{ user: User }>('/auth/me')).user

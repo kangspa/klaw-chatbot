@@ -11,7 +11,7 @@ Google 로그인 도입으로 chat_sessions.owner_id의 의미가 바뀌었기 �
   - Qdrant   : 로컬 모드 폴더(data/qdrant)의 대화 기록 컬렉션 전부 삭제 — 임베딩 방식마다 하나씩
                (conversation_history = gemini, conversation_history__local, conversation_history__ollama_qwen3)
                서버 startup에서 지금 고른 방식의 컬렉션이 자동 재생성된다. 임베딩 모델 파일(data/embeddings)·선택(.env)은 남긴다.
-  - LangGraph: MemorySaver라 프로세스 메모리에만 있으므로 서버 재시작으로 비워짐
+  - LangGraph: 대화 상태 파일(data/checkpoints.db — 최근 메시지·요약·엔티티 기억) 삭제
 
 반드시 앱(서버)을 끈 상태에서 실행한다. Qdrant 로컬 모드 폴더는 한 프로세스만 열 수 있다.
 
@@ -95,6 +95,7 @@ async def main() -> None:
     print("=" * 60)
     print(f"  SQLite   : {db_path()}")
     print(f"  Qdrant   : {stack.QDRANT_PATH} / {QDRANT_COLLECTION_PREFIX}* (임베딩 방식별 컬렉션 전부)")
+    print(f"  대화 상태 : {stack.DATA_DIR / 'checkpoints.db'}")
     print("  ※ 앱(서버)이 실행 중이면 먼저 종료하세요 (Qdrant 로컬 폴더는 한 프로세스만 열 수 있다).")
     print()
 
@@ -110,7 +111,14 @@ async def main() -> None:
     print("\n[Qdrant]")
     await reset_qdrant()
 
-    print("\n초기화 완료. 서버를 재시작하면 LangGraph 대화 상태(MemorySaver)도 함께 비워집니다.")
+    print("\n[LangGraph 대화 상태]")
+    removed = 0
+    for f in stack.DATA_DIR.glob("checkpoints.db*"):   # 본 파일 + -wal / -shm
+        f.unlink()
+        removed += 1
+    print(f"  {'삭제 완료' if removed else '없음'} (서버 startup에서 빈 상태로 다시 생성)")
+
+    print("\n초기화 완료.")
 
 
 if __name__ == "__main__":

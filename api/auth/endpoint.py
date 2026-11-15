@@ -30,6 +30,11 @@ class AuthConfigResponse(BaseModel):
         default=None, description="프론트가 Google 버튼을 렌더링할 때 사용할 클라이언트 ID"
     )
     configured: bool = Field(..., description="서버에 Google 계정 연결 설정(GOOGLE_CLIENT_ID)이 있는지")
+    allowedOrigins: list[str] = Field(
+        default_factory=list,
+        description="Google '승인된 JavaScript 원본'에 등록해 두는 주소들 (웹 포트 후보 + Vite 개발 서버). "
+                    "지금 주소가 여기 없으면 다른 프로그램이 후보 포트를 모두 써서 임시 포트로 열린 것이다",
+    )
 
 
 @router.get("/config", response_model=AuthConfigResponse)
@@ -38,7 +43,10 @@ async def get_auth_config():
     프론트가 Google 클라이언트 ID를 서버에서 받아갈 수 있도록 노출한다.
     (클라이언트 ID는 비밀값이 아니며 브라우저에 노출되는 것이 정상이다)
     """
-    return AuthConfigResponse(googleClientId=google.GOOGLE_CLIENT_ID or None, configured=google.is_configured())
+    from api.stack import WEB_PORT_CANDIDATES
+    origins = [f"http://{h}:{p}" for p in WEB_PORT_CANDIDATES for h in ("127.0.0.1", "localhost")] + ["http://localhost:5173"]
+    return AuthConfigResponse(googleClientId=google.GOOGLE_CLIENT_ID or None, configured=google.is_configured(),
+                              allowedOrigins=origins)
 
 
 @router.get("/me")

@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
+import { isGoogleOriginExpected } from '../../services/auth'
 import { formatWhen } from '../../services/time'
 import GoogleSignInButton from '../GoogleSignInButton'
 
@@ -13,6 +14,11 @@ export default function AccountCard() {
   const { user, linkGoogle, unlinkGoogle } = useAuth()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [originOk, setOriginOk] = useState(true)
+
+  useEffect(() => {
+    isGoogleOriginExpected().then((r) => setOriginOk(r.ok), () => { /* 확인 실패는 무시 */ })
+  }, [])
 
   const link = async (credential: string) => {
     setBusy(true); setError(null)
@@ -57,6 +63,12 @@ export default function AccountCard() {
           연결하지 않아도 채팅과 모든 설정을 그대로 쓸 수 있습니다.
         </p>
         {error && <p className="settings__error" role="alert">{error}</p>}
+        {!originOk && !user?.googleLinked && (
+          <p className="settings__error" role="alert">
+            다른 프로그램이 KLaw 기본 포트(8008~8012)를 모두 쓰고 있어 임시 주소({window.location.host})로 열렸습니다.
+            이 주소는 Google에 등록되지 않아 연결 버튼이 동작하지 않습니다. 그 프로그램을 끄고 KLaw를 다시 시작하세요.
+          </p>
+        )}
         {user?.googleLinked ? (
           <div className="google-link__linked">
             <span>{user.email}{user.lastLoginAt ? ` · ${formatWhen(user.lastLoginAt)} 연결` : ''}</span>

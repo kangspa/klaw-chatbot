@@ -8,9 +8,13 @@
   DATA_DIR 대화 DB(SQLite)·벡터(Qdrant 로컬 모드)·Ollama 엔진과 모델
            → 이 폴더(HOME)만 지우면 PC에 남는 것이 없다.
 
-포트: 열리는 것은 모두 127.0.0.1뿐이다.
-  - 웹 UI: KLAW_PORT_WEB(기본 8008). 사용 중이면 빈 포트를 골라 .env에 기억한다 (Google 연결 주소가 바뀌지 않도록).
-  - 법령 MCP·Ollama: 자식 프로세스라 실행할 때마다 빈 포트를 고른다 (기본 포트 우선). 다른 PC의 프로그램과 겹치지 않는다.
+포트: 열리는 것은 모두 127.0.0.1뿐이다. 다른 프로그램이 쓰고 있으면 실행할 때마다 자동으로 빈 포트를 고른다.
+  - 웹 UI: 후보 8008~8012를 차례로 시도한다 (KLAW_PORT_WEB을 주면 그 포트를 먼저). 후보를 정해 두는 이유는
+           Google 계정 연결이 '승인된 JavaScript 원본'에 등록된 주소에서만 되기 때문이다 — 이 다섯 주소를 등록해 두면
+           어느 포트가 잡혀도 연결이 된다. 후보가 모두 쓰이고 있으면 아무 빈 포트로 열고, Google 연결만 안내로 바뀐다.
+  - 법령 MCP·Ollama: 자식 프로세스라 빈 포트 아무 것이나 쓴다 (기본 39300·39301 우선).
+'사용 중' 판단: 127.0.0.1에 묶어 볼 뿐 아니라 127.0.0.1·::1로 접속도 해 본다 — 다른 프로그램이 IPv6(::1)에만
+떠 있으면 묶기는 성공해도 브라우저의 localhost가 그쪽으로 가기 때문이다 (예: 다른 Vite 개발 서버).
 """
 import os
 import socket
@@ -37,6 +41,8 @@ QDRANT_PATH = DATA_DIR / "qdrant"
 OLLAMA_DIR = DATA_DIR / "ollama"            # engine/<버전>/ollama.exe, models/, home/
 
 WEB_PORT_ENV, WEB_PORT_DEFAULT = "KLAW_PORT_WEB", 8008
+WEB_PORT_CANDIDATES = (8008, 8009, 8010, 8011, 8012)   # Google '승인된 JavaScript 원본'에 등록할 주소들
+WEB_PORT_FILE = RUNTIME_DIR / "web_port"               # 지금 쓰는 웹 포트 (Vite 개발 서버 프록시가 읽는다)
 # 자식 프로세스 → (포트 환경 변수, 기본 포트). 기본 포트가 사용 중이면 그때그때 빈 포트를 쓴다.
 CHILD_PORTS = {"law_mcp": ("KLAW_PORT_LAW_MCP", 39300), "ollama": ("KLAW_PORT_OLLAMA", 39301)}
 
@@ -55,21 +61,38 @@ for _env, _path in {
 
 
 # ────────────────────────── 포트 ──────────────────────────
+def _someone_listening(p: int) -> bool:
+    for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as s:
+                s.settimeout(0.3)
+                if s.connect_ex((host, p)) == 0:
+                    return True
+        except OSError:
+            pass
+    return False
+
+
 def port_free(p: int) -> bool:
+    """127.0.0.1에 묶을 수 있고, 127.0.0.1·::1 어느 쪽에서도 다른 프로그램이 받고 있지 않은 포트."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         try:
             s.bind(("127.0.0.1", p))
-            return True
         except OSError:
             return False
+    return not _someone_listening(p)
 
 
 def free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+    for _ in range(20):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            p = s.getsockname()[1]
+        if not _someone_listening(p):
+            return p
+    return p
 
 
 def web_port() -> int:
@@ -77,16 +100,31 @@ def web_port() -> int:
 
 
 def ensure_web_port(log=print) -> int:
-    """웹 UI 포트. 사용 중이면 빈 포트를 골라 .env에 기억한다 (다음 실행부터 같은 주소)."""
-    p = web_port()
-    if port_free(p):
-        return p
-    from api.env_store import write_env_values
-    new = free_port()
-    log(f"[stack] 웹 UI 포트 {p} 사용 중 → {new}")
-    write_env_values({WEB_PORT_ENV: str(new)}, comment="웹 UI 포트 — 기본 포트가 사용 중이라 KLaw가 고른 값 (지워도 다시 고른다)")
-    os.environ[WEB_PORT_ENV] = str(new)
-    return new
+    """
+    웹 UI 포트를 고른다 (실행할 때마다). KLAW_PORT_WEB → 후보 8008~8012 → 아무 빈 포트 순.
+    고른 값은 기억하지 않는다 — 다음 실행에서 8008이 비어 있으면 다시 8008을 쓴다.
+    """
+    children = {os.getenv(env) for env, _ in CHILD_PORTS.values()}
+    preferred = [int(os.environ[WEB_PORT_ENV])] if os.getenv(WEB_PORT_ENV) else []
+    for p in preferred + [c for c in WEB_PORT_CANDIDATES if c not in preferred]:
+        if str(p) not in children and port_free(p):
+            if p != (preferred or [WEB_PORT_DEFAULT])[0]:
+                log(f"[stack] 웹 UI 포트 {(preferred or [WEB_PORT_DEFAULT])[0]} 사용 중 → {p}")
+            break
+    else:
+        p = free_port()
+        log(f"[stack] 웹 UI 후보 포트({WEB_PORT_CANDIDATES[0]}~{WEB_PORT_CANDIDATES[-1]})가 모두 사용 중 → {p} "
+            "(이 주소에서는 Google 계정 연결이 되지 않습니다)")
+    os.environ[WEB_PORT_ENV] = str(p)
+    try:
+        WEB_PORT_FILE.write_text(str(p), encoding="utf-8")
+    except OSError:
+        pass
+    return p
+
+
+def google_origin_ok(port: int) -> bool:
+    return port in WEB_PORT_CANDIDATES
 
 
 def apply_env() -> None:
@@ -96,7 +134,7 @@ def apply_env() -> None:
     """
     if os.environ.get("_KLAW_ENV_APPLIED") == "1":
         return
-    taken: set[int] = {web_port()}
+    taken: set[int] = set(WEB_PORT_CANDIDATES) | {web_port()}   # 웹 UI 후보 포트는 비워 둔다
     for name, (env, default) in CHILD_PORTS.items():
         if os.getenv(env):
             p = int(os.environ[env])
