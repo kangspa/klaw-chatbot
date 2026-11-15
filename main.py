@@ -144,14 +144,11 @@ if __name__ == "__main__":
     #   loop="asyncio" 옵션도 동일 factory를 거쳐 무력화됨.
     #   → uvicorn.Config + Server.serve()를 직접 asyncio.run()에 넘겨,
     #     모듈 최상단의 WindowsSelectorEventLoopPolicy가 살아있는 루프를 보장한다.
-    # 개인 PC용이라 기본은 이 PC에서만 접속(127.0.0.1). 포트는 .env의 KLAW_PORT_WEB (기본 8008)
-    config = uvicorn.Config(
-        "main:app",
-        host=os.getenv("KLAW_HOST", "127.0.0.1"),
-        port=stack.ensure_web_port(),
-        reload=False,
-    )
+    # 개인 PC용이라 이 PC에서만 접속된다. 포트는 8008~8012 중 빈 포트 (api/stack.py ensure_web_port)
+    port = stack.ensure_web_port()
+    config = uvicorn.Config("main:app", host="localhost", port=port, reload=False)
     server = uvicorn.Server(config)
     # LiteLLM 버전 변경 시 서버를 내렸다가 같은 방식으로 다시 띄우기 위해 등록한다 (api/runtime_control.py)
     runtime_control.register(server, ["uv", "run", "python", "main.py"])
-    asyncio.run(server.serve())
+    # 화면 주소는 http://localhost:<포트> — 127.0.0.1·::1 둘 다 연다 (외부 접속 불가, api/stack.py web_sockets)
+    asyncio.run(server.serve(sockets=stack.web_sockets(port)))

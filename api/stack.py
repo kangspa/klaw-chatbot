@@ -8,7 +8,8 @@
   DATA_DIR 대화 DB(SQLite)·벡터(Qdrant 로컬 모드)·Ollama 엔진과 모델
            → 이 폴더(HOME)만 지우면 PC에 남는 것이 없다.
 
-포트: 열리는 것은 모두 127.0.0.1뿐이다. 다른 프로그램이 쓰고 있으면 실행할 때마다 자동으로 빈 포트를 고른다.
+포트: 열리는 것은 모두 이 PC 안(루프백)뿐이다. 웹 화면 주소는 항상 http://localhost:<포트> (웹 서버는 127.0.0.1·::1 둘 다),
+앱 내부 연결(법령 MCP·Ollama)은 127.0.0.1 — Windows에서 localhost가 ::1을 먼저 시도하다 실패하면 요청마다 느려지기 때문. 다른 프로그램이 쓰고 있으면 실행할 때마다 자동으로 빈 포트를 고른다.
   - 웹 UI: 후보 8008~8012를 차례로 시도한다 (KLAW_PORT_WEB을 주면 그 포트를 먼저). 후보를 정해 두는 이유는
            Google 계정 연결이 '승인된 JavaScript 원본'에 등록된 주소에서만 되기 때문이다 — 이 다섯 주소를 등록해 두면
            어느 포트가 잡혀도 연결이 된다. 후보가 모두 쓰이고 있으면 아무 빈 포트로 열고, Google 연결만 안내로 바뀐다.
@@ -134,6 +135,30 @@ def ensure_web_port(log=print) -> int:
     except OSError:
         pass
     return p
+
+
+def web_sockets(port: int) -> list[socket.socket]:
+    """
+    웹 서버가 들을 소켓 — localhost의 두 형태(IPv4 127.0.0.1, IPv6 ::1)에 모두 연다 (외부에서는 접속 불가).
+    화면 주소는 http://localhost:<포트>인데, 브라우저가 localhost를 ::1로 먼저 풀어도 바로 이 앱에 닿는다.
+    IPv6를 쓸 수 없는 PC면 IPv4만 연다.
+    """
+    socks = []
+    for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+        try:
+            s = socket.socket(family, socket.SOCK_STREAM)
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            if family == socket.AF_INET6:
+                s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            s.bind((host, port))
+            s.set_inheritable(True)
+            socks.append(s)
+        except OSError as e:
+            if family == socket.AF_INET:
+                raise
+            print(f"[stack] IPv6(::1) 포트 {port}를 열지 못해 IPv4만 씁니다: {e}")
+    return socks
 
 
 def google_origin_ok(port: int) -> bool:

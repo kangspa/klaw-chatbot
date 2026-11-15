@@ -69,12 +69,6 @@ export default function AccountCard() {
             이 주소는 Google에 등록되지 않아 연결 버튼이 동작하지 않습니다. 그 프로그램을 끄고 KLaw를 다시 시작하세요.
           </p>
         )}
-        {originOk && !user?.googleLinked && window.location.hostname === '127.0.0.1' && (
-          <p className="model-row__hint">
-            Google 로그인 버튼은 localhost 주소에서만 동작합니다.{' '}
-            <a href={window.location.href.replace('//127.0.0.1', '//localhost')}>localhost 주소로 다시 열기</a>
-          </p>
-        )}
         {user?.googleLinked ? (
           <div className="google-link__linked">
             <span>{user.email}{user.lastLoginAt ? ` · ${formatWhen(user.lastLoginAt)} 연결` : ''}</span>

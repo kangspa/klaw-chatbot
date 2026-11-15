@@ -259,13 +259,14 @@ class DesktopApp:
         import main   # 무거운 import (LLM·MCP·OCR 등). 법령 MCP 자식 프로세스도 여기서 뜬다
         self.set_status("웹 서버를 시작하는 중…")
         from api import runtime_control
-        config = uvicorn.Config(main.app, host="127.0.0.1", port=port, reload=False, log_config=None)
+        config = uvicorn.Config(main.app, host="localhost", port=port, reload=False, log_config=None)
+        sockets = stack.web_sockets(port)   # localhost = 127.0.0.1 + ::1
         self.server = uvicorn.Server(config)
         runtime_control.register(self.server, [])
         runtime_control.register_restart(self.restart)
         runtime_control.register_exit(self._shutdown)
         self.port = port
-        self.server_thread = threading.Thread(target=lambda: asyncio.run(self.server.serve()), daemon=True)
+        self.server_thread = threading.Thread(target=lambda: asyncio.run(self.server.serve(sockets=sockets)), daemon=True)
         self.server_thread.start()
         deadline = time.time() + 180
         while not self.server.started and time.time() < deadline:
