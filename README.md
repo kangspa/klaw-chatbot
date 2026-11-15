@@ -378,6 +378,21 @@ uv run python scripts/reset_db.py --yes   # 확인 없이 실행
 - Qdrant: 임베딩 방식별 대화 기록 컬렉션(`conversation_history*`) 전부 삭제 (서버 startup에서 지금 방식의 컬렉션 자동 재생성)
 - LangGraph 대화 상태: `data/checkpoints.db` 삭제 (요약·엔티티 기억 포함)
 
+## Google Drive 백업
+
+마이 페이지 **Google Drive 백업** 카드 (Google 계정을 연결해야 보인다 — `api/chatbot/backup.py`, `api/backup_restore.py`).
+
+- 저장 위치: 연결한 계정 Drive의 **앱 전용 숨김 폴더**(`appDataFolder`, 범위 `drive.appdata`). Drive 화면에 보이지 않고 이 앱만 읽고 쓴다.
+  사용자의 다른 Drive 파일은 볼 수 없다. 최근 5개를 보관한다.
+- 백업 내용: 대화·설정 DB(`klaw.db`), 대화 상태(`checkpoints.db`) — 열려 있어도 SQLite 온라인 백업으로 일관된 시점 —,
+  `.env`(API 키는 선택, 빼면 키 줄만 제외). 벡터(Qdrant)·모델 파일은 넣지 않는다 (임베딩은 시작할 때 복원된 대화로 다시 맞춘다).
+- 토큰: 버튼을 누를 때 브라우저가 Google에서 받는다(1시간 유효, 화면이 50분간 재사용). 서버는 그 요청에만 쓰고 저장하지 않는다.
+  연결해 둔 계정과 다른 계정으로 로그인하면 거절한다.
+- 복원: 받은 백업을 검사(`manifest`·DB 무결성)해 `.runtime/restore_pending/`에 풀어 두고 앱을 다시 시작한다 (개발 실행은 직접 재시작).
+  다음 시작 때 아무것도 열기 전에(`api/__init__`) 파일을 바꿔 넣고, 바꾸기 전 파일은 `.runtime/restore_previous/`에 한 벌 남긴다.
+  파일이 잠겨 있으면 원래대로 두고 다음 시작 때 다시 시도한다.
+- GCP 준비: Google Drive API 사용 설정, OAuth 동의 화면 데이터 액세스에 `drive.appdata` 추가, 테스트 상태면 테스트 사용자 등록.
+
 ## 앱 데이터 모두 삭제 (제거)
 
 마이 페이지 맨 아래 **앱 데이터 모두 삭제**: 설치형 프로그램의 '제거'처럼 동작한다 (`api/uninstall.py`, `/chatbot/app/*`).

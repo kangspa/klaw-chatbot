@@ -15,6 +15,7 @@ import {
   type PullState,
 } from '../services/models'
 import AccountCard from '../components/settings/AccountCard'
+import BackupCard from '../components/settings/BackupCard'
 import ApiModelsTab from '../components/settings/ApiModelsTab'
 import CustomModelsCard from '../components/settings/CustomModelsCard'
 import RuntimeCard from '../components/settings/RuntimeCard'
@@ -176,6 +177,7 @@ export default function SettingsPage() {
       </header>
 
       <AccountCard />
+      <BackupCard />
 
       <section className="settings__card">
         <div className="settings__card-head">

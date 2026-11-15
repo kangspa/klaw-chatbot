@@ -7,6 +7,9 @@
 import dotenv as _dotenv
 
 from api import stack as _stack
+from api import backup_restore as _backup_restore
 
+# Google Drive 백업에서 고른 복원이 있으면, 아무것도(.env·DB) 읽기 전에 파일을 바꿔 넣는다
+_backup_restore.apply_pending()
 _dotenv.load_dotenv(_stack.HOME / ".env")
 _stack.apply_env()

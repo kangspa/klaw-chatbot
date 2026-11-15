@@ -29,6 +29,23 @@ export interface GoogleButtonOptions {
   locale?: string
 }
 
+export interface GoogleTokenResponse {
+  access_token?: string
+  expires_in?: number
+  scope?: string
+  error?: string
+  error_description?: string
+}
+
+export interface GoogleTokenClientConfig {
+  client_id: string
+  scope: string
+  login_hint?: string
+  prompt?: '' | 'none' | 'consent' | 'select_account'
+  callback: (response: GoogleTokenResponse) => void
+  error_callback?: (error: { type: string; message?: string }) => void
+}
+
 declare global {
   interface Window {
     google?: {
@@ -38,6 +55,9 @@ declare global {
           renderButton: (parent: HTMLElement, options: GoogleButtonOptions) => void
           prompt: () => void
           disableAutoSelect: () => void
+        }
+        oauth2: {
+          initTokenClient: (config: GoogleTokenClientConfig) => { requestAccessToken: (override?: { prompt?: string }) => void }
         }
       }
     }

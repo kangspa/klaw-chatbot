@@ -1000,3 +1000,8 @@ a:hover { text-decoration: underline; }
 .uninstall-confirm__input { flex: 1 1 180px; min-width: 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--danger); background: var(--surface); color: inherit; }
 .uninstall-done { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.55); z-index: 1000; padding: 16px; }
 .uninstall-done__box { background: var(--surface); color: inherit; border-radius: 12px; padding: 24px; max-width: 420px; text-align: center; }
+
+/* Google Drive 백업 (BackupCard) */
+.backup-summary { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 14px; margin: 4px 0 8px; }
+.backup-actions { display: inline-flex; gap: 6px; flex-shrink: 0; }
+.uninstall-list li { align-items: center; }
