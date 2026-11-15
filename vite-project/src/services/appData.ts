@@ -15,6 +15,8 @@ export interface StorageItem {
 
 export interface StoragePlan {
   frozen: boolean
+  /** 개발 실행: 저장소는 두고 data/·logs/·.runtime/만 지운다 */
+  partial: boolean
   home: string
   /** exe 파일 위치 (개발 실행이면 null) */
   exePath: string | null

@@ -84,7 +84,7 @@ export default function UninstallCard() {
                   </li>
                 ))}
               </ul>
-              <p className="model-row__hint">앱 폴더: <code>{plan.home}</code>{!plan.frozen && ' (개발 실행 — data/·logs/·.runtime/만 지웁니다)'}</p>
+              <p className="model-row__hint">앱 폴더: <code>{plan.home}</code>{plan.partial && ' (개발 실행 — 저장소는 두고 data/·logs/·.runtime/만 지웁니다)'}</p>
 
               {sharedWithData.length > 0 && (
                 <label className="uninstall-option">

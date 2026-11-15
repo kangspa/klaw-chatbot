@@ -95,6 +95,7 @@ def plan() -> dict:
             shared.append({"kind": "shared" if size else "empty", "label": rel, "path": str(p), "bytes": size})
     return {
         "frozen": stack.FROZEN,
+        "partial": app_targets() != [stack.HOME],   # 개발 실행: 저장소는 두고 data/·logs/·.runtime/만
         "home": str(stack.HOME),
         "exePath": sys.executable if stack.FROZEN else None,
         "items": items,

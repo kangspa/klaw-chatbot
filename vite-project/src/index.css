@@ -908,6 +908,7 @@ a:hover { text-decoration: underline; }
 .upgrade-job__title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
 .upgrade-job__time { font-weight: 500; color: var(--muted); flex: 0 0 auto; }
 .upgrade-job__message { padding: 8px 12px 0; font-size: 13px; overflow-wrap: anywhere; }
+.upgrade-job__message:last-child { padding-bottom: 10px; }
 .upgrade-job__log {
   margin: 0; padding: 10px 12px; max-height: 220px; overflow: auto;
   background: #0f1524; color: #c9d3e6; font-size: 12px; line-height: 1.5;
