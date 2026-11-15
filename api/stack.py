@@ -63,12 +63,12 @@ for _env, _path in {
 # ────────────────────────── 배포 기본값 ──────────────────────────
 def app_default(name: str) -> str:
     """
-    exe에 넣어 둔 기본값 (scripts/build_exe.py가 app_defaults.json으로 만든다). 예: GOOGLE_CLIENT_ID —
-    공개값이라 exe에 넣어도 되며, 받아서 쓰는 사람이 따로 설정하지 않아도 Google 연결이 된다. .env 값이 항상 우선.
+    앱에 내장한 공개 설정값 (api/app_defaults.json — 저장소에 있고 exe에도 그대로 들어간다). 예: GOOGLE_CLIENT_ID.
+    .env를 보지 않는다 — 개발 실행·exe·다른 사람 PC 모두 같은 값을 쓴다.
     """
     import json
     try:
-        return str(json.loads((BUNDLE / "app_defaults.json").read_text(encoding="utf-8")).get(name) or "")
+        return str(json.loads((BUNDLE / "api" / "app_defaults.json").read_text(encoding="utf-8")).get(name) or "")
     except (OSError, ValueError):
         return ""
 

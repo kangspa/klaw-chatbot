@@ -36,7 +36,7 @@ export default function GoogleSignInButton({ onCredential, busy }: GoogleSignInB
       if (!alive) return
       if (!clientId) {
         throw new Error(
-          'Google 계정 연결이 설정되지 않았습니다. .env의 GOOGLE_CLIENT_ID를 지정한 뒤 서버를 재시작하세요.',
+          'Google 계정 연결이 설정되지 않았습니다 (api/app_defaults.json의 GOOGLE_CLIENT_ID).',
         )
       }
 

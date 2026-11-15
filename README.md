@@ -63,7 +63,7 @@
    - 애플리케이션 유형: **웹 애플리케이션**
    - **승인된 JavaScript 원본**: `http://localhost:5173` (Vite 개발 서버 주소)
    - 클라이언트 보안 비밀번호(secret)는 이 방식에서 쓰지 않는다
-3. 발급된 클라이언트 ID를 `.env`의 `GOOGLE_CLIENT_ID=` 에 붙여넣고 서버 재시작
+3. 발급된 클라이언트 ID를 `api/app_defaults.json`의 `GOOGLE_CLIENT_ID`에 넣고 서버 재시작 (공개값 — 저장소와 exe에 그대로 들어간다, `.env`는 보지 않는다)
 
 > 프론트에는 클라이언트 ID를 심지 않는다. `/auth/config`로 백엔드에서 받아가므로 앞뒤가 어긋날 일이 없다.
 
@@ -129,7 +129,6 @@ cd vite-project && npm run dev   # 프론트 (http://localhost:5173)
 
 | 변수 | 설명 |
 | --- | --- |
-| `GOOGLE_CLIENT_ID` | (선택) Google OAuth 웹 클라이언트 ID. 비어 있어도 앱은 그대로 쓰고, 마이 페이지의 Google 계정 연결만 안내 문구로 바뀐다 |
 | `ANNEX_OCR_ENABLED` | 이미지 기반 별표(PDF) 응답을 PaddleOCR로 텍스트화하는 후처리. 기본 켜짐, `0`이면 끔 |
 | `CHAT_FALLBACK_MODELS` | 기본 모델 실패(429 등) 시 순차 폴백할 모델 목록 (쉼표 구분, 선택). DB에 등록·활성화된 모델만 사용 |
 | `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | 각 클라우드 모델 호출용. Gemini 키는 대화 기록 임베딩을 `gemini`로 골랐을 때도 쓴다 |
@@ -430,7 +429,7 @@ uv run python scripts/build_exe.py --console   # 로그를 콘솔로 보는 확�
 - **업데이트**: Ollama 엔진과 LiteLLM 모두 exe 안에서 마이 페이지 버튼으로 올린다 (다시 빌드하지 않는다). 새 LiteLLM이 exe에 없는 패키지를 요구하면 그때만 새 exe가 필요하다.
 - **Google 계정 연결**: 앱은 화면을 `http://localhost:<포트>`로 연다 (Google 로그인 버튼은 `127.0.0.1` 출처를 등록해도 거절한다).
   Google Cloud Console의 OAuth 클라이언트 → 승인된 JavaScript 원본에 `http://localhost`와 `http://localhost:8008` ~ `http://localhost:8012`를 등록한다
-  (개발용 `http://localhost:5173`도). `GOOGLE_CLIENT_ID`는 빌드할 때 exe에 기본값으로 들어간다 (`build/app_defaults.json`, `.env` 값이 우선) —
+  (개발용 `http://localhost:5173`도). `GOOGLE_CLIENT_ID`는 `api/app_defaults.json`에 두고 개발 실행·exe 모두 이 값만 쓴다 (`.env`는 보지 않는다) —
   공개값이라 넣어도 안전하며(Client Secret은 쓰지 않음), exe를 받은 사람도 따로 설정하지 않고 Google 연결·Drive 백업을 쓸 수 있다.
 
 | 환경 변수 | 기본값 | 용도 |

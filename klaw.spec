@@ -32,9 +32,8 @@ datas = [
     # exe에서 LiteLLM 새 버전을 시험할 때 exe 자신이 실행하는 점검 스크립트 (api/litellm_overlay.py)
     (str(ROOT / "scripts" / "check_litellm_compat.py"), "scripts"),
 ]
-# 공개 기본값 (GOOGLE_CLIENT_ID 등) — scripts/build_exe.py가 만든다. api/stack.py app_default()
-if (ROOT / "build" / "app_defaults.json").exists():
-    datas.append((str(ROOT / "build" / "app_defaults.json"), "."))
+# 내장 공개 설정값 (GOOGLE_CLIENT_ID 등) — api/stack.py app_default()
+datas.append((str(ROOT / "api" / "app_defaults.json"), "api"))
 # LiteLLM 새 버전이 요구하는 패키지 버전을 exe 안에서 확인할 수 있도록 의존성 메타데이터를 함께 넣는다
 for dist in ("litellm", "langchain-litellm", "mcp"):
     datas += copy_metadata(dist, recursive=True)

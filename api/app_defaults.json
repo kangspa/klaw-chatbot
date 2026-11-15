@@ -1,0 +1,4 @@
+{
+  "_comment": "앱에 내장하는 공개 설정값. GOOGLE_CLIENT_ID는 비밀이 아니다(브라우저에 그대로 노출되는 값, Client Secret은 쓰지 않음). 개발 실행·exe 모두 이 값만 쓴다 (.env 값은 보지 않는다).",
+  "GOOGLE_CLIENT_ID": "850910366739-i78pbjtsgu1k14hvo39t0ummgfm6u1fi.apps.googleusercontent.com"
+}

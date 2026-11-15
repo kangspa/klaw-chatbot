@@ -23,9 +23,9 @@ from jwt import PyJWKClient
 
 dotenv.load_dotenv()
 
-# .env 값이 우선, 없으면 exe에 넣어 둔 기본값 (클라이언트 ID는 공개값 — Client Secret은 쓰지 않는다)
+# 앱에 내장한 값만 쓴다 (api/app_defaults.json — 공개값, Client Secret은 쓰지 않는다). .env는 보지 않는다
 from api.stack import app_default  # noqa: E402
-GOOGLE_CLIENT_ID = (os.getenv("GOOGLE_CLIENT_ID") or app_default("GOOGLE_CLIENT_ID")).strip()
+GOOGLE_CLIENT_ID = app_default("GOOGLE_CLIENT_ID").strip()
 
 JWKS_URI = "https://www.googleapis.com/oauth2/v3/certs"
 VALID_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
@@ -61,7 +61,7 @@ async def verify_id_token(credential: str) -> dict[str, Any]:
     """
     if not GOOGLE_CLIENT_ID:
         raise GoogleAuthError(
-            "GOOGLE_CLIENT_ID가 설정되지 않았습니다. .env에 Google OAuth 클라이언트 ID를 지정하세요."
+            "GOOGLE_CLIENT_ID가 설정되지 않았습니다. api/app_defaults.json에 Google OAuth 클라이언트 ID를 지정하세요."
         )
     if not credential:
         raise GoogleAuthError("Google 인증 정보가 비어 있습니다.")
@@ -73,7 +73,7 @@ async def verify_id_token(credential: str) -> dict[str, Any]:
     except jwt.InvalidAudienceError as e:
         raise GoogleAuthError(
             "이 앱을 위해 발급된 Google 인증 정보가 아닙니다. "
-            "프론트의 VITE_GOOGLE_CLIENT_ID와 백엔드의 GOOGLE_CLIENT_ID가 같은지 확인하세요."
+            "화면과 서버가 같은 클라이언트 ID(api/app_defaults.json)를 쓰는지 확인하세요."
         ) from e
     except jwt.InvalidTokenError as e:
         raise GoogleAuthError(f"Google 인증 정보를 검증하지 못했습니다: {e}") from e
