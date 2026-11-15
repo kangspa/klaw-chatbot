@@ -34,7 +34,14 @@ export default function EmbeddingCard() {
     }
   }, [])
 
-  useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => {
+    let alive = true
+    getEmbeddingStatus().then(
+      (s) => { if (alive) { setStatus(s); setLoadError(null) } },
+      (e) => { if (alive) setLoadError(e instanceof Error ? e.message : '임베딩 상태를 불러오지 못했습니다.') },
+    )
+    return () => { alive = false }
+  }, [])
 
   const job = status?.reindex ?? null
   const jobActive = job?.status === 'preparing' || job?.status === 'indexing'
