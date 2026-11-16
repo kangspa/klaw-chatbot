@@ -17,6 +17,7 @@
 로컬 모델이 아직 없으면 채팅 호출 시 안내 오류(400)만 돌려준다 (chat_runner.resolve_model).
 """
 import asyncio
+import os
 from importlib import metadata as importlib_metadata
 from typing import Any, Literal, Optional
 
@@ -39,6 +40,7 @@ from api.llm_gateway.local_models import (
     ollama_inventory,
     ollama_name,
 )
+from api.llm_gateway.local_runtime import ollama_base_url
 from api.llm_gateway.providers import LOCAL_PROVIDERS, split_model_id
 from api.load_variable import MODEL_REGISTRY
 
@@ -67,6 +69,11 @@ class ModelOption(BaseModel):
         default=None,
         description="도구 호출 지원 여부 (설치된 커스텀 모델만 확인). false면 법률 검색 도구를 쓸 수 없어 답변이 실패한다",
     )
+    keyMissing: Optional[str] = Field(default=None, description="이 모델에 필요한데 없는 API 키 이름 (있으면 쓸 수 없다)")
+    downloadBytes: Optional[int] = Field(default=None, description="Ollama 모델의 디스크 크기 (받기 전에는 레지스트리 기준)")
+    vramBytes: Optional[int] = Field(default=None, description="예상 VRAM (가중치 + numCtx 문맥의 KV 캐시 + 여유, 최대 예상)")
+    numCtx: Optional[int] = Field(default=None, description="VRAM 예상에 쓴 문맥 길이")
+    gpuVramBytes: Optional[int] = Field(default=None, description="이 PC GPU 메모리 (Ollama가 감지한 값, 모르면 null)")
 
 
 class PreferenceRequest(BaseModel):
@@ -129,6 +136,22 @@ async def list_models(current_user: dict[str, Any] = Depends(get_current_user)):
     installed = await installed_ollama_models() if any(ollama_name(s.id) for s in specs) else None
     pulls = PULL_MANAGER.snapshot()
 
+    # Ollama 모델의 크기·예상 VRAM (받기 전에도 레지스트리에서 — api/llm_gateway/model_specs.py, 캐시됨)
+    from api.chatbot.keys import missing_key_for
+    from api.llm_gateway import model_specs
+    default_ctx = int(os.getenv("OLLAMA_NUM_CTX", "32768"))
+    names = {s.id: ollama_name(s.id) for s in specs if ollama_name(s.id)}
+    sizes = {n: installed_size(n, installed) for n in names.values() if installed and is_installed(n, installed)}
+    hw: dict[str, dict] = {}
+    for ctx in {int((s.options or {}).get("num_ctx") or default_ctx) for s in specs if s.id in names}:
+        group = [n for sid, n in names.items()
+                 if int((next(x for x in specs if x.id == sid).options or {}).get("num_ctx") or default_ctx) == ctx]
+        try:
+            hw.update(await model_specs.specs_for(group, ctx, sizes, ollama_base_url() if installed is not None else None))
+        except Exception as e:
+            print(f"[models] 모델 크기·VRAM 계산 실패(무시): {type(e).__name__}: {e}")
+    gpu = await asyncio.to_thread(model_specs.gpu_vram_bytes) if names and installed is not None else None
+
     out = []
     for s in specs:
         provider, _ = split_model_id(s.id)
@@ -155,6 +178,9 @@ async def list_models(current_user: dict[str, Any] = Depends(get_current_user)):
             id=s.id, label=s.label, group=s.group, isDefault=s.is_default,
             enabled=s.id not in disabled, local=local, localStatus=status, pull=pull, sizeBytes=size,
             custom=s.is_custom, ollamaName=name, supportsTools=supports_tools,
+            keyMissing=None if local else missing_key_for(s.id),
+            downloadBytes=(hw.get(name) or {}).get("downloadBytes"), vramBytes=(hw.get(name) or {}).get("vramBytes"),
+            numCtx=(hw.get(name) or {}).get("numCtx"), gpuVramBytes=gpu if name else None,
         ))
     return out
 

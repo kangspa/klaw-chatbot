@@ -51,6 +51,15 @@ export interface ModelOption {
   ollamaName: string | null
   /** 도구 호출 지원 여부 (설치된 커스텀 모델만 확인, 모르면 null). false면 법률 검색을 할 수 없다 */
   supportsTools: boolean | null
+  /** 필요한데 없는 API 키 이름 (있으면 이 모델로 대화할 수 없다) */
+  keyMissing?: string | null
+  /** Ollama 모델 디스크 크기 (받기 전에는 레지스트리 기준) */
+  downloadBytes?: number | null
+  /** 예상 VRAM (가중치 + numCtx 문맥 KV 캐시 + 여유, 최대 예상) */
+  vramBytes?: number | null
+  numCtx?: number | null
+  /** 이 PC GPU 메모리 (Ollama가 감지한 값) */
+  gpuVramBytes?: number | null
 }
 
 /** 서버(Ollama)에 받아져 있는 모델 하나 */
@@ -144,11 +153,13 @@ export async function deleteCustomModel(modelId: string): Promise<{ deleted: boo
 
 /** 바로 대화에 쓸 수 있는 모델인지 (로컬은 받아져 있어야 함, 상태를 모르는 런타임은 시도 허용) */
 export function isUsable(m: ModelOption): boolean {
-  return !m.local || m.localStatus === 'installed' || m.localStatus === 'unmanaged'
+  if (!m.local) return !m.keyMissing
+  return m.localStatus === 'installed' || m.localStatus === 'unmanaged'
 }
 
 /** 로컬 모델이 쓸 수 없을 때 선택 목록·설정 화면에 붙일 짧은 사유 */
 export function unusableReason(m: ModelOption): string | null {
+  if (!m.local && m.keyMissing) return 'API 키 필요'
   switch (m.localStatus) {
     case 'missing': return '다운로드 필요'
     case 'pulling': return m.pull?.percent != null ? `다운로드 중 ${Math.floor(m.pull.percent)}%` : '다운로드 중'
@@ -172,9 +183,19 @@ export function groupModels(models: ModelOption[]): ModelGroup[] {
  * 처음 선택할 모델 ID.
  * 기본 모델이 사용 가능하면 그것, 아니면 사용 가능한 첫 모델, 그것도 없으면 첫 모델.
  */
+const LAST_MODEL_KEY = 'klaw.lastModel'
+
+/** 마지막으로 고른 모델 (새 대화에서도 이어서 쓴다 — 이 브라우저에만 저장) */
+export function rememberModel(id: string): void {
+  try { localStorage.setItem(LAST_MODEL_KEY, id) } catch { /* 저장소를 못 써도 무시 */ }
+}
+
+/** 마지막으로 고른 모델 → 기본 모델 → 쓸 수 있는 첫 모델 순 (키 없는 API 모델·받지 않은 로컬 모델은 건너뛴다) */
 export function defaultModelId(models: ModelOption[]): string {
   const usable = models.filter(isUsable)
-  return (usable.find((m) => m.isDefault) ?? usable[0] ?? models[0])?.id ?? ''
+  let last: string | null = null
+  try { last = localStorage.getItem(LAST_MODEL_KEY) } catch { /* 무시 */ }
+  return (usable.find((m) => m.id === last) ?? usable.find((m) => m.isDefault) ?? usable[0] ?? models[0])?.id ?? ''
 }
 
 /** 1,234,567,890 바이트 → '1.2 GB' */

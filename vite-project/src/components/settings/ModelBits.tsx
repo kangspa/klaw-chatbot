@@ -53,3 +53,28 @@ export function ModelSwitch({ model: m, saving, isLastEnabled, onToggle }: Model
     </label>
   )
 }
+
+/** Ollama 모델의 디스크 크기·예상 VRAM과, 이 PC GPU에 다 올라가는지 */
+export function ModelHardware({ model: m }: { model: ModelOption }) {
+  if (!m.local || (m.downloadBytes == null && m.vramBytes == null)) return null
+  // 작업 관리자·Ollama GPU 표시와 같은 1024 기준 (16GB 그래픽카드가 17.1GB로 보이지 않게)
+  const gb = (b: number) => `${(b / 1024 ** 3).toFixed(1)} GB`
+  const ctx = m.numCtx ? `${Math.round(m.numCtx / 1024)}K` : null
+  let fit: { tone: string; text: string } | null = null
+  if (m.vramBytes && m.gpuVramBytes) {
+    fit = m.vramBytes <= m.gpuVramBytes * 0.95
+      ? { tone: 'ok', text: `이 PC GPU(${gb(m.gpuVramBytes)})에 올라감` }
+      : { tone: 'warn', text: `이 PC GPU(${gb(m.gpuVramBytes)})보다 큼 — 일부를 CPU로 돌려 느려짐` }
+  }
+  return (
+    <div className="model-hw">
+      {m.downloadBytes != null && <span>디스크 {gb(m.downloadBytes)}</span>}
+      {m.vramBytes != null && (
+        <span title="모델 가중치 + 대화 문맥(KV 캐시) + 계산용 여유. 문맥을 짧게 쓰면 실제로는 더 적게 씁니다.">
+          예상 VRAM 최대 {gb(m.vramBytes)}{ctx ? ` (문맥 ${ctx})` : ''}
+        </span>
+      )}
+      {fit && <span className={`badge badge--${fit.tone}`}>{fit.text}</span>}
+    </div>
+  )
+}

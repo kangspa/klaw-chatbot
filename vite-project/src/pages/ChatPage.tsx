@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useSessions } from '../context/SessionsContext'
 import { sendChat } from '../services/chatApi'
-import { defaultModelId, groupModels, isUsable, listModels, unusableReason, type ModelOption } from '../services/models'
+import { defaultModelId, groupModels, isUsable, listModels, unusableReason, type ModelOption, rememberModel } from '../services/models'
 import { branchFromMessage, deleteMessage, getSession, regenerateMessage } from '../services/sessions'
 import { localIsoWithOffset } from '../services/time'
 import type { ChatMessage } from '../types'
@@ -128,8 +128,10 @@ export default function ChatPage() {
         await refresh()
       }
     } catch (err) {
+      // 서버에 닿지 못한 경우(fetch 자체 실패 = TypeError)에만 '실행 중인지 확인' 안내를 붙인다
+      const offline = err instanceof TypeError
       const msg = err instanceof Error ? err.message : '응답을 받지 못했습니다.'
-      setError(`${msg}\nKLaw(백엔드 서버)가 실행 중인지 확인해주세요.`)
+      setError(offline ? `${msg}\nKLaw가 실행 중인지(트레이 아이콘) 확인해주세요.` : msg)
     } finally {
       setPending(null)
       setSending(false)
@@ -230,7 +232,7 @@ export default function ChatPage() {
         </div>
         <label className="chat__model">
           <span>모델</span>
-          <select value={model} onChange={(e) => setModel(e.target.value)} disabled={isBusy || models.length === 0}>
+          <select value={model} onChange={(e) => { setModel(e.target.value); rememberModel(e.target.value) }} disabled={isBusy || models.length === 0}>
             {models.length === 0 && <option value="">불러오는 중…</option>}
             {groupModels(models).map((g) => (
               <optgroup key={g.group} label={g.group}>

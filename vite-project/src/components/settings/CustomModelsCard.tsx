@@ -8,7 +8,7 @@ import {
   type ModelOption,
   type PullState,
 } from '../../services/models'
-import { LocalBadge, ModelSwitch, PullProgress } from './ModelBits'
+import { LocalBadge, ModelSwitch, PullProgress, ModelHardware } from './ModelBits'
 
 interface CustomModelsCardProps {
   /** 커스텀 모델만 */
@@ -205,11 +205,11 @@ function CustomModelRow({
             {m.label}
             <button className="model-row__edit" onClick={startEdit} title="표시 이름 변경" aria-label={`${m.label} 이름 변경`}>✎</button>
             <LocalBadge model={m} pulling={pulling} />
-            {m.sizeBytes != null && <span className="badge badge--muted">{formatBytes(m.sizeBytes)}</span>}
             {m.supportsTools === false && <span className="badge badge--warn">도구 호출 미지원</span>}
           </div>
         )}
         <code className="model-row__id">{m.ollamaName ?? m.id}</code>
+        <ModelHardware model={m} />
 
         {pulling && <PullProgress pull={pull} />}
         {pullFailed && <p className="model-row__error">다운로드 실패: {pull?.message}</p>}

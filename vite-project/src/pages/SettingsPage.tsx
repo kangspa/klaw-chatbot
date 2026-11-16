@@ -21,7 +21,7 @@ import CustomModelsCard from '../components/settings/CustomModelsCard'
 import RuntimeCard from '../components/settings/RuntimeCard'
 import EmbeddingCard from '../components/settings/EmbeddingCard'
 import UninstallCard from '../components/settings/UninstallCard'
-import { LocalBadge, ModelSwitch, PullProgress } from '../components/settings/ModelBits'
+import { LocalBadge, ModelSwitch, PullProgress, ModelHardware } from '../components/settings/ModelBits'
 
 type ModelTab = ApiProvider | 'local'
 
@@ -335,9 +335,10 @@ function ModelRow({ model: m, pull, saving, isLastEnabled, onToggle, onDownload,
           {m.label}
           {m.isDefault && <span className="badge badge--primary">기본</span>}
           {m.local && <LocalBadge model={m} pulling={pulling} />}
-          {m.sizeBytes != null && <span className="badge badge--muted">{formatBytes(m.sizeBytes)}</span>}
+          {!m.local && m.keyMissing && <span className="badge badge--muted">API 키 필요</span>}
         </div>
         <code className="model-row__id">{m.id}</code>
+        <ModelHardware model={m} />
 
         {pulling && <PullProgress pull={pull} />}
         {pullFailed && <p className="model-row__error">다운로드 실패: {pull?.message}</p>}
