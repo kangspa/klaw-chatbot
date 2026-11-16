@@ -202,6 +202,22 @@ def schedule_session_summary(*, user_id: str, session_id: str, turn_id: Optional
     _running[session_id] = asyncio.create_task(loop())
 
 
+async def _summary_model(session_id: str):
+    """요약에 쓸 모델 ID (None = 기본 모델). 쓸 수 있는 모델이 없으면 False."""
+    from api.chatbot.keys import missing_key_for
+    default = await MODEL_REGISTRY.resolve(None)
+    if not missing_key_for(default.id):
+        return None
+    async with get_pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT model FROM llm_usage WHERE session_id = $1 ORDER BY created_at DESC LIMIT 20", session_id)
+    for r in rows:
+        if not missing_key_for(r["model"]):
+            return r["model"]
+    print(f"[insights] 세션 요약을 건너뜀 — 기본 모델 {default.id}의 API 키가 없고 이 세션에서 쓴 다른 모델도 없음")
+    return False
+
+
 async def refresh_session_summary(*, user_id: str, session_id: str, turn_id: Optional[str]) -> None:
     try:
         async with get_pool().acquire() as conn:
@@ -223,9 +239,13 @@ async def refresh_session_summary(*, user_id: str, session_id: str, turn_id: Opt
             f"[{'사용자' if m['role'] == 'user' else '상담 AI'}] {m['content'][:SUMMARY_MSG_CHARS]}" for m in msgs)
         prompt = _SUMMARY_PROMPT.format(previous=(previous or {}).get("overall") or "없음", transcript=transcript)
 
-        # 사용자가 고른 모델(고가·로컬일 수 있음) 대신 기본 모델로 요약한다. 비용은 사용량에 함께 기록.
+        # 기본 모델로 요약한다 (사용자가 고른 모델은 고가·느린 로컬일 수 있다). 기본 모델의 API 키가 없으면
+        # 이 세션에서 실제로 답한 모델로 — 키 없이 로컬 모델만 쓰는 PC에서도 요약이 된다. 비용은 사용량에 함께 기록.
+        summary_model = await _summary_model(session_id)
+        if summary_model is False:
+            return
         cost_cb = CostTrackingCallback(MODEL_REGISTRY)
-        llm = await MODEL_MANAGER.get_model(None)
+        llm = await MODEL_MANAGER.get_model(summary_model)
         result: SessionSummary = await llm.with_structured_output(SessionSummary).ainvoke(
             [SystemMessage(content=prompt), HumanMessage(content="위 세션을 요약하세요.")],
             {"callbacks": [cost_cb]},

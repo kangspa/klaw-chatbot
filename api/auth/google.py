@@ -21,7 +21,7 @@ import dotenv
 import jwt
 from jwt import PyJWKClient
 
-dotenv.load_dotenv()
+# .env는 api/__init__가 앱 폴더(HOME)의 것만 읽는다 — 여기서 다시 읽으면 실행 위치 기준으로 다른 .env를 찾을 수 있다
 
 # 앱에 내장한 값만 쓴다 (api/app_defaults.json — 공개값, Client Secret은 쓰지 않는다). .env는 보지 않는다
 from api.stack import app_default  # noqa: E402

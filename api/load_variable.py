@@ -4,7 +4,7 @@ from typing import Annotated, TypedDict, List, Dict, Optional, Any
 
 from qdrant_client import AsyncQdrantClient
 
-dotenv.load_dotenv()
+# .env는 api/__init__가 앱 폴더(HOME)의 것만 읽는다 — 여기서 다시 읽으면 실행 위치 기준으로 다른 .env를 찾을 수 있다
 
 from api.llm_gateway import ModelManager, ModelRegistry
 

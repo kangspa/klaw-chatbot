@@ -72,6 +72,20 @@ def _current(spec: KeySpec) -> tuple[Optional[str], Optional[str]]:
     return None, None
 
 
+# 모델 접두사 → 필요한 API 키
+_PROVIDER_KEY = {"gemini": "GEMINI", "openai": "OPENAI", "anthropic": "ANTHROPIC"}
+
+
+def missing_key_for(model_id: str) -> Optional[str]:
+    """그 모델을 부르는 데 필요한 API 키가 없으면 키 이름(예: 'Google Gemini'), 있거나 필요 없으면 None."""
+    key_id = _PROVIDER_KEY.get(model_id.split("/", 1)[0])
+    spec = _BY_ID.get(key_id) if key_id else None
+    if spec is None:
+        return None
+    value, _ = _current(spec)
+    return None if value else spec.label
+
+
 def _mask(value: str) -> str:
     if len(value) <= 8:
         return "•" * len(value)

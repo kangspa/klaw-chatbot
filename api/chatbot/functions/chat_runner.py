@@ -27,6 +27,21 @@ async def resolve_model(model: Optional[str]) -> str:
     그래프 깊숙한 곳에서 500으로 터지는 대신 어떻게 해야 하는지 알려주는 오류로 바꾼다.
     """
     spec = await MODEL_REGISTRY.resolve(model)
+    from api.chatbot.keys import missing_key_for
+    key = missing_key_for(spec.id)
+    if key and not model:
+        # 모델을 지정하지 않았는데 기본 모델의 키가 없으면, 받아 둔 로컬 모델이 있을 때 그걸 쓴다
+        installed = await installed_ollama_models() or set()
+        local = next((s for s in await MODEL_REGISTRY.list_enabled()
+                      if ollama_name(s.id) and is_installed(ollama_name(s.id), installed)), None)
+        if local is not None:
+            print(f"[chat] 기본 모델 {spec.id}의 API 키({key})가 없어 받아 둔 로컬 모델 {local.id}로 답합니다")
+            spec, key = local, None
+    if key:
+        raise ModelNotAvailableError(
+            f"'{spec.label}'을(를) 쓰려면 {key} API 키가 필요합니다. 마이 페이지 > API 키에서 넣거나, "
+            "모델 선택에서 받아 둔 로컬 모델(Ollama)을 고르세요."
+        )
     name = ollama_name(spec.id)
     if name is not None:
         from api.llm_gateway.ollama_upgrade import UPGRADER
@@ -123,5 +138,13 @@ def describe_exception(e: Exception) -> str:
     err_type = type(e).__name__
     err_repr = repr(e)
     print(f"Chat Error [{err_type}]: {err_repr}")
-    print(traceback.format_exc())
-    return f"[{err_type}] {err_repr}"
+    print(traceback.format_exc())   # 자세한 내용은 로그에만
+    # 화면에는 짧게: LiteLLM 오류 문자열에 섞여 오는 traceback·버그 신고 링크는 뺀다
+    msg = str(e) or err_repr
+    for cut in ("\nTraceback (most recent call last)", "Traceback (most recent call last)", "This looks like a bug in LiteLLM"):
+        msg = msg.split(cut, 1)[0]
+    msg = msg.strip()
+    low = msg.lower()
+    if "api key" in low and ("missing" in low or "invalid" in low or "incorrect" in low):
+        return f"[{err_type}] 모델 API 키가 없거나 올바르지 않습니다. 마이 페이지 > API 키를 확인하거나 다른 모델을 고르세요. ({msg[:160]})"
+    return f"[{err_type}] {msg[:400]}"
