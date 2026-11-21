@@ -11,6 +11,7 @@ favicon.svg를 바꾸면 이 스크립트를 다시 실행하면 된다 (scripts
     uv run python scripts/make_icons.py
 """
 import asyncio
+import base64
 import sys
 from pathlib import Path
 
@@ -23,10 +24,11 @@ OUT = ROOT / "assets"
 
 async def render_svg(size: int) -> Image.Image:
     from playwright.async_api import async_playwright
-    svg = SVG.read_text(encoding="utf-8")
+    # base64로 넣는다 — 그대로 넣으면 SVG 안의 따옴표·#·한글 때문에 이미지가 깨질 수 있다
+    svg = base64.b64encode(SVG.read_bytes()).decode()
     html = (f"<html><body style='margin:0;background:transparent'>"
             f"<div style='width:{size}px;height:{size}px;display:flex;align-items:center;justify-content:center'>"
-            f"<img src='data:image/svg+xml;utf8,{svg.replace(chr(35), '%23')}' "
+            f"<img src='data:image/svg+xml;base64,{svg}' "
             f"style='width:{int(size * 0.92)}px;height:{int(size * 0.92)}px;object-fit:contain'></div></body></html>")
     async with async_playwright() as p:
         browser = await p.chromium.launch(channel="msedge", headless=True)
