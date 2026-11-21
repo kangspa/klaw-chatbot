@@ -193,12 +193,9 @@ class GatewayChatModel(BaseChatModel):
             text = think.feed(content_to_text(chunk.content))
             # response_metadata는 조각을 합칠 때 문자열끼리 이어 붙여지므로(finish_reason → 'stopstop') 마지막 조각에만 싣는다
             out = chunk.model_copy(update={"content": text, "response_metadata": {}})
-            gen = ChatGenerationChunk(message=out)
-            if run_manager is not None and text:
-                await run_manager.on_llm_new_token(text, chunk=gen)
-            yield gen
+            # on_llm_new_token(토큰 이벤트)은 BaseChatModel이 yield된 조각마다 스스로 보낸다 —
+            # 여기서도 보내면 화면에 글자가 두 번씩 나온다 ('사사용용자자')
+            yield ChatGenerationChunk(message=out)
         tail = think.flush()
         final = AIMessageChunk(content=tail, response_metadata={"finish_reason": reason or "stop", "gateway_model": self.model_id})
-        if run_manager is not None and tail:
-            await run_manager.on_llm_new_token(tail, chunk=ChatGenerationChunk(message=final))
         yield ChatGenerationChunk(message=final)

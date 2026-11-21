@@ -110,7 +110,9 @@ async def _run(agent, job: TurnJob, isotime: Optional[str]) -> None:
                     job.emit("reset", {})
                 job.step = NODE_STEPS[name]
                 job.emit("status", {"step": job.step})
-            elif kind == "on_chat_model_stream" and node in ANSWER_NODES:
+            # 그래프 안에서는 바깥 GatewayChatModel과 그 안의 ChatLiteLLM이 같은 조각을 각각 이벤트로 낸다
+            # (실행 설정이 안쪽 모델로 이어지기 때문) → 바깥 것만 쓴다. 안 거르면 글자가 두 번씩 나온다
+            elif kind == "on_chat_model_stream" and node in ANSWER_NODES and name == "GatewayChatModel":
                 chunk = ev["data"].get("chunk")
                 text = getattr(chunk, "content", "") if chunk is not None else ""
                 if isinstance(text, str) and text and not getattr(chunk, "tool_call_chunks", None):

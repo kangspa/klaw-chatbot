@@ -48,6 +48,7 @@ export default function ChatPage() {
   const [failedTurn, setFailedTurn] = useState<{ sessionId: string; user: ChatMessage; reply: ChatMessage } | null>(null)
   const streamRef = useRef<AbortController | null>(null)
   const [busy, setBusy] = useState<{ id: string; action: BusyAction } | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
 
   const bottomRef = useRef<HTMLDivElement>(null)
   // 이어 받기 콜백이 최신 메시지 목록을 보도록 (effect 의존성에 넣으면 메시지마다 다시 붙는다)
@@ -197,6 +198,25 @@ export default function ChatPage() {
     }
   }
 
+  /** 답변 복사 — 마크다운 원문 그대로 (메모장·문서에 붙여 넣어도 표·목록 모양이 남는다) */
+  const handleCopy = async (message: ChatMessage) => {
+    try {
+      await navigator.clipboard.writeText(message.content)
+    } catch {
+      // 클립보드 권한이 없을 때를 대비한 예전 방식
+      const ta = document.createElement('textarea')
+      ta.value = message.content
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      ta.remove()
+    }
+    setCopiedId(message.id)
+    window.setTimeout(() => setCopiedId((cur) => (cur === message.id ? null : cur)), 1500)
+  }
+
   /** ① 삭제 — 이 답변과 짝이 되는 질문을 DB·Qdrant·대화 상태에서 모두 제거 */
   const handleDelete = async (message: ChatMessage) => {
     if (isBusy) return
@@ -334,6 +354,14 @@ export default function ChatPage() {
 
                   {actionable && (
                     <div className="msg__actions">
+                      <button
+                        className="msg__action"
+                        onClick={() => void handleCopy(m)}
+                        title="이 답변을 그대로(마크다운 원문) 복사합니다"
+                      >
+                        <span aria-hidden>{copiedId === m.id ? '✓' : '⧉'}</span>
+                        {copiedId === m.id ? '복사됨' : '복사'}
+                      </button>
                       <button
                         className="msg__action"
                         onClick={() => handleRegenerate(m)}
