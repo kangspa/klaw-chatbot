@@ -14,6 +14,16 @@
 
 자식 프로세스(node·ollama)는 Windows **Job Object**에 묶여 있어, 앱이 정상 종료하든 강제 종료되든 함께 끝난다 (`api/services.py`).
 
+## 빌드·릴리스
+
+- 로컬 빌드: `uv run python scripts/build_exe.py` → `dist/KLaw.exe` (Node.js가 빌드하는 PC에만 필요).
+- 버전은 `api/version.py`의 `APP_VERSION` 한 곳에서 관리한다 (트레이·로그·백업 정보·exe 파일 속성). `pyproject.toml`의 `version`도 같이 올린다.
+- 릴리스: 두 값을 올려 커밋한 뒤 `git tag v<버전>` → `git push origin v<버전>`.
+  `.github/workflows/release.yml`이 Windows에서 exe를 빌드해 **초안(draft) Release**에 `KLaw.exe`·`KLaw.exe.sha256`을 올린다.
+  Releases 화면에서 내용을 확인하고 **게시**하면 공개된다. 안내문 틀은 `.github/release-notes.md`.
+- 아이콘: `vite-project/public/favicon.svg`(직접 그린 저울 도안) 하나로 브라우저 탭·트레이·exe·화면 로고를 모두 쓴다.
+  바꾼 뒤 `uv run python scripts/make_icons.py`로 `assets/`의 트레이·exe 아이콘을 다시 만든다.
+
 # API Request Body Sample
 
 ```json

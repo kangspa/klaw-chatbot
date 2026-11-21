@@ -1,0 +1,92 @@
+# KLaw.exe를 빌드해 GitHub Release에 올린다.
+#
+#   v<버전> 태그 push (예: git tag v0.1.0 && git push origin v0.1.0)
+#     → 태그·api/version.py·pyproject.toml의 버전이 같은지 확인 → exe 빌드 → 초안(draft) Release에 KLaw.exe와 SHA-256 첨부
+#   Actions 탭에서 직접 실행(workflow_dispatch)해도 api/version.py 버전으로 같은 초안을 만든다 (태그는 게시할 때 생긴다).
+#
+# 저장소가 공개라서 바로 게시하지 않고 초안으로 둔다. Releases 화면에서 내용을 확인한 뒤 '게시(Publish release)'를 누른다.
+# 같은 버전의 Release가 이미 있으면 파일만 새로 바꿔 올린다.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # korean-law-mcp (법령 MCP)
+
+      - name: 버전 확인
+        id: ver
+        run: |
+          app=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' api/version.py)
+          proj=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
+          echo "api/version.py=$app pyproject.toml=$proj ref=$GITHUB_REF_NAME"
+          if [ -z "$app" ] || [ "$app" != "$proj" ]; then
+            echo "::error::api/version.py($app)와 pyproject.toml($proj)의 버전이 다릅니다"; exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$app" ]; then
+            echo "::error::태그($GITHUB_REF_NAME)가 앱 버전(v$app)과 다릅니다"; exit 1
+          fi
+          echo "version=$app" >> "$GITHUB_OUTPUT"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: vite-project/.nvmrc
+          cache: npm
+          cache-dependency-path: vite-project/package-lock.json
+
+      - name: 의존성 설치
+        run: |
+          uv sync --frozen
+          npm ci --prefix vite-project --no-audit --no-fund
+
+      - name: exe 빌드
+        run: uv run python scripts/build_exe.py
+
+      - name: SHA-256
+        run: |
+          cd dist
+          # Get-FileHash와 바로 비교하도록 대문자로
+          echo "$(sha256sum KLaw.exe | cut -d' ' -f1 | tr 'a-f' 'A-F')  KLaw.exe" > KLaw.exe.sha256
+          cat KLaw.exe.sha256
+
+      - name: 초안 Release에 올리기
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ steps.ver.outputs.version }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/KLaw.exe dist/KLaw.exe.sha256 --clobber
+            echo "기존 Release $TAG의 파일을 바꿨습니다"
+          else
+            sed "s/{{VERSION}}/$VERSION/g" .github/release-notes.md > release-notes.md
+            gh release create "$TAG" dist/KLaw.exe dist/KLaw.exe.sha256 --draft \
+              --title "KLaw $VERSION" --notes-file release-notes.md --generate-notes --target "$GITHUB_SHA"
+            echo "초안 Release $TAG를 만들었습니다 — Releases 화면에서 확인 후 게시하세요"
+          fi

@@ -24,9 +24,9 @@ import webbrowser
 from pathlib import Path
 
 from api import stack  # 가벼운 모듈 (앱 전체를 import하지 않는다)
+from api.version import APP_VERSION
 
 APP_NAME = "KLaw"
-APP_VERSION = "1.1.0"
 
 
 # ────────────────────────── 콘솔 없이 실행 ──────────────────────────

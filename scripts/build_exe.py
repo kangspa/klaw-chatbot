@@ -81,6 +81,39 @@ def build_law_mcp(npm: str) -> None:
     print(f"법령 MCP: {LAW_MCP_DIR} ({size:.0f} MB)")
 
 
+VERSION_INFO = ROOT / "build" / "version_info.txt"
+
+
+def app_version() -> str:
+    """api/version.py의 APP_VERSION (앱 전체를 import하지 않고 읽는다)."""
+    m = re.search(r'^APP_VERSION = "([^"]+)"', (ROOT / "api" / "version.py").read_text(encoding="utf-8"), re.M)
+    if not m:
+        raise RuntimeError("api/version.py에서 APP_VERSION을 찾을 수 없습니다")
+    return m.group(1)
+
+
+def write_version_info(version: str) -> Path:
+    """exe 파일 속성(자세히 탭)에 보일 버전 정보 — PyInstaller 버전 파일 형식."""
+    nums = (tuple(int(x) for x in re.findall(r"\d+", version)[:4]) + (0, 0, 0, 0))[:4]
+    VERSION_INFO.parent.mkdir(parents=True, exist_ok=True)
+    VERSION_INFO.write_text(f"""VSVersionInfo(
+  ffi=FixedFileInfo(filevers={nums}, prodvers={nums}, mask=0x3f, flags=0x0, OS=0x40004,
+                    fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[
+    StringFileInfo([StringTable('041204B0', [
+      StringStruct('ProductName', 'KLaw'),
+      StringStruct('FileDescription', 'KLaw - 국내법 상담 챗봇'),
+      StringStruct('FileVersion', '{version}'),
+      StringStruct('ProductVersion', '{version}'),
+      StringStruct('InternalName', 'KLaw'),
+      StringStruct('OriginalFilename', 'KLaw.exe')])]),
+    VarFileInfo([VarStruct('Translation', [0x0412, 1200])])
+  ]
+)
+""", encoding="utf-8")
+    return VERSION_INFO
+
+
 DEFAULTS_FILE = ROOT / "api" / "app_defaults.json"   # 내장 공개 설정값 (exe에 그대로 들어간다)
 CLIENT_ID_RE = re.compile(r"^\d+-[a-z0-9]+\.apps\.googleusercontent\.com$")
 
@@ -127,8 +160,9 @@ def main() -> int:
     step("내장 설정값 (api/app_defaults.json)")
     check_app_defaults()
 
-    step("PyInstaller")
-    env = {**os.environ, "KLAW_BUILD_MODE": "onedir" if args.onedir else "onefile",
+    version = app_version()
+    step(f"PyInstaller (버전 {version})")
+    env = {"KLAW_VERSION_FILE": str(write_version_info(version)), **os.environ, "KLAW_BUILD_MODE": "onedir" if args.onedir else "onefile",
            "KLAW_BUILD_CONSOLE": "1" if args.console else "0",
            "KLAW_NODE_BUNDLE": str(NODE_DIR), "KLAW_LAW_MCP_BUNDLE": str(LAW_MCP_DIR)}
     run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", args.distpath, str(ROOT / "klaw.spec")],

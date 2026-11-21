@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from api import backup_restore as br
 from api import runtime_control, stack
+from api.version import APP_VERSION
 from api.auth.deps import get_current_user
 
 router = APIRouter(prefix="/backup", dependencies=[Depends(get_current_user)])
@@ -33,7 +34,6 @@ DRIVE = "https://www.googleapis.com/drive/v3"
 UPLOAD = "https://www.googleapis.com/upload/drive/v3/files"
 KEEP = 5
 STATE_FILE = stack.RUNTIME_DIR / "backup_state.json"
-APP_VERSION = "1.1.0"
 
 
 class TokenRequest(BaseModel):

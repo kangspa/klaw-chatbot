@@ -85,7 +85,8 @@ splash = Splash(
 ) if MODE == "onefile" else None
 
 common = dict(name="KLaw", debug=False, strip=False, upx=False, console=CONSOLE,
-              icon=str(ROOT / "assets" / "klaw.ico"), disable_windowed_traceback=False)
+              icon=str(ROOT / "assets" / "klaw.ico"), disable_windowed_traceback=False,
+              version=os.getenv("KLAW_VERSION_FILE") or None)   # exe 파일 속성의 버전 (scripts/build_exe.py가 만든다)
 
 if MODE == "onefile":
     exe = EXE(pyz, splash, splash.binaries, a.scripts, a.binaries, a.datas, [],
