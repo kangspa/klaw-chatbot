@@ -86,6 +86,12 @@ def missing_key_for(model_id: str) -> Optional[str]:
     return None if value else spec.label
 
 
+def law_oc_configured() -> bool:
+    """법제처 Open API 인증값(LAW_OC)이 등록돼 있는지."""
+    value, _ = _current(_BY_ID["LAW_OC"])
+    return bool(value)
+
+
 def _mask(value: str) -> str:
     if len(value) <= 8:
         return "•" * len(value)

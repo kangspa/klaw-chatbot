@@ -602,10 +602,30 @@ async def classify_intent(state: AgentState, config: RunnableConfig):
 
 
 def route_by_law_intent(state: AgentState) -> str:
-    """분류 결과에 따라 비법률 노드(general_chat) 또는 법률 검색 노드(law_search_agent)로 분기."""
+    """
+    분류 결과에 따라 비법률 노드(general_chat) 또는 법률 검색 노드(law_search_agent)로 분기.
+    법률 질문인데 법제처 Open API 인증값(LAW_OC)이 없으면 검색을 해 봐야 인증 오류뿐이므로,
+    오래 돌리지 않고 바로 등록 안내(law_key_required)로 보낸다.
+    """
     if state.get("is_law_related", False):
-        return "law_search_agent"
+        from api.chatbot.keys import law_oc_configured
+        return "law_search_agent" if law_oc_configured() else "law_key_required"
     return "general_chat"
+
+
+LAW_OC_GUIDE = (
+    "법령·판례를 찾아 답하려면 **법제처 Open API 인증값(LAW_OC)**이 필요해요. 아직 등록되어 있지 않아 검색을 하지 못했어요.\n\n"
+    "1. [국가법령정보 공동활용](https://open.law.go.kr)에서 회원가입 후 **OPEN API 사용 신청**을 해요 (무료).\n"
+    "2. 발급받은 인증값(OC, 보통 가입한 이메일의 @ 앞부분)을 **마이 페이지 > API 키 > 법제처 Open API (LAW_OC)**에 넣어요.\n"
+    "3. 같은 질문을 다시 보내 주세요.\n\n"
+    f"{LEGAL_DISCLAIMER}"
+)
+
+
+async def law_key_required(state: AgentState):
+    """LAW_OC가 없을 때 법률 질문에 대한 즉시 안내 (LLM·검색 호출 없음)."""
+    print("--- [law_key_required] LAW_OC 미등록 → 등록 안내 반환 ---")
+    return {"messages": [AIMessage(content=LAW_OC_GUIDE)]}
 
 
 # ==========================================
@@ -911,11 +931,14 @@ async def law_response_agent(state: AgentState, config: RunnableConfig):
     # (근거 없이 LLM에게 맡기면 원인을 사용자 탓으로 돌리는 문장이 나올 수 있다)
     if find_auth_failure(attempts):
         print("--- [law_response_agent] 법제처 인증 오류 → 시스템 안내문 반환 (LLM 미호출) ---")
+        from api.chatbot.keys import law_oc_configured
+        if not law_oc_configured():
+            return {"messages": [AIMessage(content=LAW_OC_GUIDE)]}
         notice = (
-            "죄송합니다. 지금 법령 검색 시스템에 일시적인 문제(법제처 API 인증 오류)가 있어 "
-            "법령·판례를 확인할 수 없습니다.\n\n"
-            "질문에는 문제가 없으니 잠시 후 같은 질문으로 다시 시도해주세요. "
-            "문제가 계속되면 관리자에게 문의해주시기 바랍니다.\n\n"
+            "법제처 법령 검색이 **인증 오류**로 거절되어 법령·판례를 확인하지 못했어요.\n\n"
+            "등록된 **법제처 Open API 인증값(LAW_OC)**이 올바르지 않거나, 아직 OPEN API 사용 승인이 나지 않았을 수 있어요. "
+            "**마이 페이지 > API 키 > 법제처 Open API (LAW_OC)**에서 값을 확인하고 '확인' 버튼으로 바로 검사해 보세요. "
+            "값이 맞다면 [국가법령정보 공동활용](https://open.law.go.kr)에서 신청 상태를 확인해 주세요.\n\n"
             f"{LEGAL_DISCLAIMER}"
         )
         return {"messages": [AIMessage(content=notice)]}
@@ -1063,6 +1086,8 @@ workflow.add_node("law_tool_node", law_tool_node)
 
 # 메모리 관리 노드 등록
 workflow.add_node("memory_manager", memory_manager_safe)
+workflow.add_node("law_key_required", law_key_required)
+workflow.add_edge("law_key_required", "memory_manager")
 
 # 진입점 설정: 분류 노드로 시작
 workflow.set_entry_point("classify_intent")
@@ -1073,7 +1098,8 @@ workflow.add_conditional_edges(
     route_by_law_intent,
     {
         "general_chat": "general_chat",
-        "law_search_agent": "law_search_agent"
+        "law_search_agent": "law_search_agent",
+        "law_key_required": "law_key_required",
     }
 )
 

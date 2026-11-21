@@ -7,7 +7,7 @@ from langchain_core.messages import HumanMessage
 # request.app.state.chatbot_agent에 저장된다 (체크포인터가 이벤트 루프 필요).
 from api.auth.deps import get_current_user
 from api.chatbot.functions import session_store
-from api.chatbot.functions.chat_runner import describe_exception, resolve_model, run_agent_turn
+from api.chatbot.functions.chat_runner import friendly_error, describe_exception, resolve_model, run_agent_turn
 from api.chatbot.functions.insights import schedule_session_summary
 from api.llm_gateway import ModelNotAvailableError
 from api.db import is_ready as db_is_ready
@@ -95,8 +95,9 @@ async def post_plan_chat(
             user_graph_message_id=user_message_id,
         )
     except Exception as e:
-        detail = describe_exception(e)
-        raise HTTPException(status_code=500, detail=f"에이전트 호출 중 오류가 발생했습니다: {detail}")
+        describe_exception(e)   # 자세한 내용은 로그로
+        _, text = friendly_error(e, model)
+        raise HTTPException(status_code=500, detail=text)
 
     # DB 기록 (실패해도 이미 생성된 답변은 그대로 반환한다)
     saved: dict[str, Any] = {}

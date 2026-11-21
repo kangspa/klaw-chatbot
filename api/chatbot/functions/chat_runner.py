@@ -148,3 +148,36 @@ def describe_exception(e: Exception) -> str:
     if "api key" in low and ("missing" in low or "invalid" in low or "incorrect" in low):
         return f"[{err_type}] 모델 API 키가 없거나 올바르지 않습니다. 마이 페이지 > API 키를 확인하거나 다른 모델을 고르세요. ({msg[:160]})"
     return f"[{err_type}] {msg[:400]}"
+
+
+_PROVIDER_NAMES = {"gemini": "Google Gemini", "openai": "OpenAI", "anthropic": "Anthropic"}
+
+
+def friendly_error(e: Exception, model_id: str = "") -> tuple[str, str]:
+    """
+    답변 실패를 화면에 AI 말풍선처럼 보여 줄 안내문으로 바꾼다. (kind, 문장)
+      auth  : API 키가 틀렸거나 만료·권한 없음 (401/403)
+      quota : 사용 한도·요금 부족 (429, 결제)
+      other : 그 밖의 오류 (짧게 줄인 원문)
+    """
+    name = type(e).__name__
+    raw = str(e) or repr(e)
+    low = (name + " " + raw).lower()
+    provider = _PROVIDER_NAMES.get(model_id.split("/", 1)[0], "")
+    who = f"{provider} " if provider else ""
+    if ("authenticationerror" in low or "permissiondenied" in low or " 401" in low or "invalid api key" in low
+            or "incorrect api key" in low or "api key not valid" in low or "api_key_invalid" in low
+            or "invalid x-api-key" in low):
+        return "auth", (f"등록된 {who}API 키가 올바르지 않거나 만료되어 답변하지 못했어요.\n\n"
+                        "**마이 페이지 > API 키**에서 키를 다시 확인하고 '확인' 버튼으로 바로 검사해 보세요. "
+                        "모델 선택에서 다른 모델(예: 받아 둔 로컬 모델)로 바꿔 보내도 돼요.")
+    if "missing" in low and "api key" in low:
+        return "auth", (f"{who}API 키가 등록되어 있지 않아 답변하지 못했어요. **마이 페이지 > API 키**에서 키를 넣거나, "
+                        "받아 둔 로컬 모델(Ollama)을 골라 보내 주세요.")
+    if "ratelimit" in low or " 429" in low or "quota" in low or "insufficient_quota" in low or "credit" in low:
+        return "quota", (f"{who}API 사용 한도를 넘었거나 크레딧이 부족해 답변하지 못했어요. 잠시 뒤 다시 보내거나, "
+                         "해당 회사 콘솔에서 사용량·결제 상태를 확인해 주세요. 다른 모델로 바꿔 보내도 돼요.")
+    msg = raw
+    for cut in ("\nTraceback (most recent call last)", "Traceback (most recent call last)", "This looks like a bug in LiteLLM"):
+        msg = msg.split(cut, 1)[0]
+    return "other", f"답변 중 오류가 발생했어요: [{name}] {msg.strip()[:300]}"
