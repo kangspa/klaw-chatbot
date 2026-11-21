@@ -34,6 +34,8 @@ export interface ChatMessage {
   updatedAt?: string
   /** 아직 서버에 저장되지 않은 낙관적 렌더링용 메시지 */
   pending?: boolean
+  /** 답하지 못한 이유를 AI 말풍선처럼 보여 주는 안내 (DB에 저장되지 않음, 버튼 없음) */
+  notice?: boolean
 }
 
 export interface Session {

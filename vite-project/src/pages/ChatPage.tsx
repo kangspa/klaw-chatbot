@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useSessions } from '../context/SessionsContext'
-import { sendChat } from '../services/chatApi'
+import Markdown from '../components/Markdown'
+import UserAvatar from '../components/UserAvatar'
+import { ChatHttpError, followLiveTurn, getLiveTurn, streamChat, type StreamHandlers } from '../services/chatApi'
 import { defaultModelId, groupModels, isUsable, listModels, unusableReason, type ModelOption, rememberModel } from '../services/models'
 import { branchFromMessage, deleteMessage, getSession, regenerateMessage } from '../services/sessions'
 import { localIsoWithOffset } from '../services/time'
@@ -32,28 +34,39 @@ export default function ChatPage() {
   const { sessions, loading, applyMessages, upsert, refresh } = useSessions()
 
   const session = sessions.find((s) => s.id === sessionId)
-  const messages = session?.messages ?? []
+  const messages = useMemo(() => session?.messages ?? [], [session?.messages])
 
   const [input, setInput] = useState('')
   // 빈 문자열이면 서버 기본 모델을 쓴다 (목록을 받기 전에 보내는 경우 포함)
   const [model, setModel] = useState('')
   const [models, setModels] = useState<ModelOption[]>([])
-  const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  // 낙관적 렌더링: 서버 응답 전까지 화면에만 보여줄 사용자 메시지
-  const [pending, setPending] = useState<ChatMessage | null>(null)
+  // 지금 만들고 있는 답변 (보낸 질문 + 흘러오는 답변 + 단계). 다른 페이지에 다녀와도 서버에서 이어 받는다
+  const [live, setLive] = useState<{ sessionId: string; userText: string; text: string; step: string } | null>(null)
+  // 답하지 못한 질문과 그 안내문 (API 키 문제 등) — AI 말풍선처럼 보여 주고 DB에는 저장하지 않는다
+  const [failedTurn, setFailedTurn] = useState<{ sessionId: string; user: ChatMessage; reply: ChatMessage } | null>(null)
+  const streamRef = useRef<AbortController | null>(null)
   const [busy, setBusy] = useState<{ id: string; action: BusyAction } | null>(null)
 
   const bottomRef = useRef<HTMLDivElement>(null)
+  // 이어 받기 콜백이 최신 메시지 목록을 보도록 (effect 의존성에 넣으면 메시지마다 다시 붙는다)
+  const messagesRef = useRef<ChatMessage[]>(messages)
+  useEffect(() => { messagesRef.current = messages }, [messages])
   const seededRef = useRef(false)
   // 목록에 없는 세션을 서버에서 직접 받아오는 시도는 sessionId마다 1회만 (실패 시 무한 재요청 방지)
   const fetchedRef = useRef<Set<string>>(new Set())
   // 서버 직접 조회를 마친 sessionId. 이걸로 '조회 중' 여부를 파생시킨다(effect 내 동기 setState 회피).
   const [probed, setProbed] = useState<string | null>(null)
 
-  const visibleMessages = pending ? [...messages, pending] : messages
-  const isBusy = sending || busy !== null
+  const liveHere = live && live.sessionId === sessionId ? live : null
+  const failedHere = failedTurn && failedTurn.sessionId === sessionId ? failedTurn : null
+  const visibleMessages: ChatMessage[] = [
+    ...messages,
+    ...(failedHere ? [failedHere.user, failedHere.reply] : []),
+    ...(liveHere ? [{ id: 'live-user', role: 'user' as const, content: liveHere.userText, createdAt: '', pending: true }] : []),
+  ]
+  const isBusy = busy !== null || liveHere !== null
   const resolving = !session && !loading && probed !== sessionId
 
   /**
@@ -98,10 +111,60 @@ export default function ChatPage() {
     }
   }, [location.state])
 
-  // 새 메시지/전송상태 변화 시 하단으로 스크롤
+  // 새 메시지/전송상태 변화·답변 조각이 올 때 하단으로 스크롤
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [visibleMessages.length, sending, busy])
+  }, [visibleMessages.length, busy, liveHere?.text.length])
+
+  /** 답변 진행 이벤트 → 화면 상태 (질문을 보낸 경우와 다시 붙은 경우가 같은 처리) */
+  const handlersFor = (sid: string, userText: string): StreamHandlers => ({
+    onSnapshot: (snap) => setLive({ sessionId: sid, userText: snap.userMessage?.content ?? userText, text: snap.text, step: snap.step }),
+    onStatus: (step) => setLive((cur) => (cur && cur.sessionId === sid ? { ...cur, step } : cur)),
+    onToken: (t) => setLive((cur) => (cur && cur.sessionId === sid ? { ...cur, text: cur.text + t } : cur)),
+    onReset: () => setLive((cur) => (cur && cur.sessionId === sid ? { ...cur, text: '' } : cur)),
+    onDone: (result) => {
+      // 서버가 DB에 저장한 실제 행(id/seq/turnId — 삭제/브랜치/재생성에 필요)으로 대화를 다시 받는다.
+      // 끝난 시점에 서버의 대화를 통째로 받으면, 다른 페이지에서 돌아와 목록을 아직 불러오는 중이었어도 정확하다.
+      getSession(sid).then(
+        (s) => { upsert(s); setLive(null) },
+        () => {
+          if (result.userMessage && result.assistantMessage) {
+            applyMessages(sid, [...messagesRef.current, result.userMessage, result.assistantMessage], result.session ?? undefined)
+          } else {
+            void refresh()
+          }
+          setLive(null)
+        },
+      )
+    },
+    onError: (e) => {
+      setFailedTurn({ sessionId: sid, user: { id: uid(), role: 'user', content: userText, createdAt: new Date().toISOString() },
+                      reply: { id: uid(), role: 'assistant', content: e.detail, createdAt: new Date().toISOString(), notice: true } })
+      setLive(null)
+    },
+  })
+
+  // 세션에 들어오면 진행 중인 답변이 있는지 보고 이어 받는다 (답변 중 다른 페이지에 다녀온 경우)
+  useEffect(() => {
+    if (!sessionId) return
+    const ctrl = new AbortController()
+    streamRef.current?.abort()
+    streamRef.current = ctrl
+    getLiveTurn(sessionId).then(async (t) => {
+      if (ctrl.signal.aborted) return
+      if (t.status === 'running' && t.userMessage) {
+        setLive({ sessionId, userText: t.userMessage.content, text: t.text ?? '', step: t.step ?? '' })
+        try {
+          await followLiveTurn(sessionId, handlersFor(sessionId, t.userMessage.content), ctrl.signal)
+        } catch { /* 연결이 끊기면 다음에 들어올 때 다시 붙는다 */ }
+      } else if (t.status === 'done' && t.result?.assistantMessage
+                 && !messagesRef.current.some((m) => m.id === t.result!.assistantMessage!.id)) {
+        void refresh()   // 다른 페이지에 있는 동안 끝난 답변
+      }
+    }, () => { /* 서버가 없으면 무시 */ })
+    return () => ctrl.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId])
 
   const handleSend = async () => {
     const text = input.trim()
@@ -109,32 +172,28 @@ export default function ChatPage() {
 
     setError(null)
     setNotice(null)
+    setFailedTurn(null)
     setInput('')
-    setPending({ id: uid(), role: 'user', content: text, createdAt: new Date().toISOString(), pending: true })
-    setSending(true)
+    const sid = sessionId
+    setLive({ sessionId: sid, userText: text, text: '', step: '질문을 살펴보는 중' })
+    const ctrl = new AbortController()
+    streamRef.current?.abort()
+    streamRef.current = ctrl
 
     try {
-      const result = await sendChat({ sessionId, message: text, model: model || undefined })
-      // 서버가 DB에 저장한 실제 행(id/seq/turnId 포함)으로 교체한다.
-      // 이 id들이 있어야 삭제/브랜치/재생성 버튼이 동작한다.
-      // 첫 메시지면 백엔드가 세션 제목도 자동 생성하므로 result.session으로 함께 반영한다.
-      if (result.userMessage && result.assistantMessage) {
-        applyMessages(
-          sessionId,
-          [...messages, result.userMessage, result.assistantMessage],
-          result.session ?? undefined,
-        )
-      } else {
-        await refresh()
-      }
+      await streamChat({ sessionId: sid, message: text, model: model || undefined }, handlersFor(sid, text), ctrl.signal)
     } catch (err) {
+      if (ctrl.signal.aborted) return   // 다른 세션·페이지로 이동 — 답변은 서버에서 계속된다
+      if (err instanceof ChatHttpError && err.status === 400) {
+        // API 키가 없는 모델 등 — AI 말풍선처럼 안내
+        handlersFor(sid, text).onError?.({ detail: err.message, kind: 'auth' })
+        return
+      }
+      setLive(null)
       // 서버에 닿지 못한 경우(fetch 자체 실패 = TypeError)에만 '실행 중인지 확인' 안내를 붙인다
       const offline = err instanceof TypeError
       const msg = err instanceof Error ? err.message : '응답을 받지 못했습니다.'
       setError(offline ? `${msg}\nKLaw가 실행 중인지(트레이 아이콘) 확인해주세요.` : msg)
-    } finally {
-      setPending(null)
-      setSending(false)
     }
   }
 
@@ -262,15 +321,15 @@ export default function ChatPage() {
 
           {visibleMessages.map((m) => {
             const busyAction = busy?.id === m.id ? busy.action : null
-            const actionable = m.role === 'assistant' && !m.pending
+            const actionable = m.role === 'assistant' && !m.pending && !m.notice
             return (
               <div key={m.id} className={`msg msg--${m.role}`}>
-                <div className="msg__avatar" aria-hidden>
-                  {m.role === 'user' ? (user?.name?.[0]?.toUpperCase() ?? '나') : '⚖️'}
-                </div>
+                {m.role === 'user'
+                  ? <div className="msg__avatar msg__avatar--user" aria-hidden><UserAvatar size={32} /></div>
+                  : <div className="msg__avatar" aria-hidden>⚖️</div>}
                 <div className="msg__body">
-                  <div className={`msg__bubble${busyAction === 'regenerate' ? ' is-regenerating' : ''}`}>
-                    {m.content}
+                  <div className={`msg__bubble${busyAction === 'regenerate' ? ' is-regenerating' : ''}${m.notice ? ' msg__bubble--notice' : ''}`}>
+                    {m.role === 'assistant' ? <Markdown text={m.content} /> : m.content}
                   </div>
 
                   {actionable && (
@@ -309,13 +368,18 @@ export default function ChatPage() {
             )
           })}
 
-          {sending && (
-            <div className="msg msg--assistant">
+          {liveHere && (
+            <div className="msg msg--assistant" aria-live="polite">
               <div className="msg__avatar" aria-hidden>⚖️</div>
               <div className="msg__body">
-                <div className="msg__bubble msg__bubble--typing">
-                  <span className="dot" /><span className="dot" /><span className="dot" />
-                </div>
+                {liveHere?.text ? (
+                  <div className="msg__bubble msg__bubble--streaming"><Markdown text={liveHere.text} /></div>
+                ) : (
+                  <div className="msg__bubble msg__bubble--typing">
+                    <span className="dot" /><span className="dot" /><span className="dot" />
+                  </div>
+                )}
+                {liveHere?.step && <div className="msg__step">{liveHere.step}…</div>}
               </div>
             </div>
           )}

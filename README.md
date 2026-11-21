@@ -85,6 +85,18 @@
 
 세션 id 하나가 곧 `LangGraph thread_id` = `Qdrant payload.thread_id` = `chat_sessions.id` 이다.
 
+# 스트리밍 답변 (`api/chatbot/live.py`)
+
+화면은 `POST /chatbot/chat/stream`(SSE)으로 질문을 보내고 답변을 토큰 단위로 받는다. 답변은 요청과 분리된 '진행 중 답변'으로 서버에서 돌기 때문에,
+답변 중 다른 페이지로 가도 끝까지 만들어져 저장된다. 다시 그 대화에 들어오면 `GET /chatbot/chat/live/{세션}`으로 보낸 질문·지금까지의 답변·단계를 받고
+`GET /chatbot/chat/live/{세션}/events`로 남은 부분을 이어 받는다. 이벤트: `snapshot`·`status`(질문 분석 → 법령 검색 → 답변 작성 → 기억 정리)·`token`·`reset`·`done`·`error`.
+
+- 토큰은 `GatewayChatModel._astream`이 흘린다 (`<think>` 구간 제거, 사용량·finish_reason 유지 — 비용 집계 그대로). 답변 노드(`general_chat`·`law_response_agent`) 것만 화면에 보낸다.
+- 법률 질문인데 `LAW_OC`가 없으면 검색 없이 바로 등록 안내 (`law_key_required` 노드).
+- API 키가 틀렸거나(401·403) 한도 초과(429)면 AI 말풍선 형태의 안내로 바꾼다 (`chat_runner.friendly_error`, DB에는 저장하지 않음).
+- 답변은 마크다운으로 그린다 (`components/Markdown.tsx` — react-markdown + remark-gfm + remark-cjk-friendly, 원문 HTML은 그리지 않음).
+- 기존 `POST /chatbot/chat`(한 번에 받기)도 그대로 쓸 수 있다.
+
 # 대화 세션 관리 API
 
 모두 `Authorization: Bearer <accessToken>` 필요. 소유자는 토큰에서 결정되므로 `userId`를 보내지 않는다.

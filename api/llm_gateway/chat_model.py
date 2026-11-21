@@ -18,12 +18,12 @@ LiteLLM 채팅 모델(ChatLiteLLM)을 감싸, 앱 전체가 같은 형태의 입
 CostTrackingCallback이 호출(run_id)마다 어떤 모델의 단가를 쓸지 안다.
 """
 import re
-from typing import Any, Optional, Sequence
+from typing import Any, AsyncIterator, Optional, Sequence
 
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable, RunnableLambda
 from pydantic import ConfigDict
 
@@ -84,6 +84,40 @@ def normalize_output(msg: AIMessage, model_id: str) -> AIMessage:
     return msg.model_copy(update={"content": text, "response_metadata": meta})
 
 
+class _ThinkFilter:
+    """스트리밍 중 <think>…</think> 구간을 걸러낸다 (태그가 조각 경계에 걸쳐 와도 처리)."""
+
+    def __init__(self) -> None:
+        self.inside = False
+        self.buf = ""
+
+    def feed(self, text: str) -> str:
+        self.buf += text
+        out = []
+        while self.buf:
+            tag = "</think>" if self.inside else "<think>"
+            i = self.buf.find(tag)
+            if i >= 0:
+                if not self.inside:
+                    out.append(self.buf[:i])
+                self.buf = self.buf[i + len(tag):]
+                if self.inside:
+                    self.buf = self.buf.lstrip()
+                self.inside = not self.inside
+                continue
+            # 태그 앞부분일 수 있는 꼬리는 다음 조각까지 남겨 둔다
+            keep = next((k for k in range(min(len(tag) - 1, len(self.buf)), 0, -1) if tag.startswith(self.buf[-k:])), 0)
+            if not self.inside:
+                out.append(self.buf[:len(self.buf) - keep])
+            self.buf = self.buf[len(self.buf) - keep:] if keep else ""
+            break
+        return "".join(out)
+
+    def flush(self) -> str:
+        rest, self.buf = ("" if self.inside else self.buf), ""
+        return rest
+
+
 class GatewayChatModel(BaseChatModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -138,3 +172,33 @@ class GatewayChatModel(BaseChatModel):
         if stop is not None:
             kwargs["stop"] = stop
         return self._wrap(await self._target().ainvoke(prepare_messages(messages), _NO_CALLBACKS, **kwargs))
+
+    async def _astream(self, messages: list[BaseMessage], stop: Optional[list[str]] = None,
+                       run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
+                       **kwargs: Any) -> AsyncIterator[ChatGenerationChunk]:
+        """
+        토큰 스트리밍 (화면에 답변을 흘려 보여 주기 위해 — astream_events로 실행할 때 쓰인다).
+        _agenerate와 같은 보정을 한다: 입력 정리, <think> 구간 제거, 마지막 조각에 finish_reason·gateway_model.
+        사용량(usage_metadata)은 LiteLLM이 마지막 조각에 실어 보내 합쳐지므로 비용 집계도 그대로 된다.
+        """
+        if stop is not None:
+            kwargs["stop"] = stop
+        think = _ThinkFilter()
+        reason = None
+        async for chunk in self._target().astream(prepare_messages(messages), _NO_CALLBACKS, **kwargs):
+            if not isinstance(chunk, AIMessageChunk):
+                continue
+            meta = chunk.response_metadata or {}
+            reason = meta.get("finish_reason") or meta.get("stop_reason") or meta.get("done_reason") or reason
+            text = think.feed(content_to_text(chunk.content))
+            # response_metadata는 조각을 합칠 때 문자열끼리 이어 붙여지므로(finish_reason → 'stopstop') 마지막 조각에만 싣는다
+            out = chunk.model_copy(update={"content": text, "response_metadata": {}})
+            gen = ChatGenerationChunk(message=out)
+            if run_manager is not None and text:
+                await run_manager.on_llm_new_token(text, chunk=gen)
+            yield gen
+        tail = think.flush()
+        final = AIMessageChunk(content=tail, response_metadata={"finish_reason": reason or "stop", "gateway_model": self.model_id})
+        if run_manager is not None and tail:
+            await run_manager.on_llm_new_token(tail, chunk=ChatGenerationChunk(message=final))
+        yield ChatGenerationChunk(message=final)
