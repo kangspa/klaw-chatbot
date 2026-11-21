@@ -119,7 +119,6 @@ a:hover { text-decoration: underline; }
   padding: 36px 32px;
 }
 .auth__brand { text-align: center; margin-bottom: 24px; }
-.auth__logo { font-size: 40px; display: block; }
 .auth__title { font-size: 26px; margin-top: 8px; }
 .auth__tagline { color: var(--muted); font-size: 14px; margin-top: 4px; }
 .auth__form { display: flex; flex-direction: column; gap: 16px; }
@@ -168,7 +167,7 @@ a:hover { text-decoration: underline; }
   color: var(--muted);
   font-size: 14px;
 }
-.app-booting__logo { font-size: 40px; }
+.app-booting__logo { display: block; }
 .app-booting__detail { font-size: 13px; color: var(--muted); max-width: 520px; text-align: center; }
 
 /* ============================================================
@@ -202,7 +201,7 @@ a:hover { text-decoration: underline; }
   border-right: 1px solid var(--sidebar-border);
 }
 .sidebar__brand { display: flex; align-items: center; gap: 10px; padding: 4px 6px 16px; }
-.sidebar__logo { font-size: 26px; }
+.sidebar__logo { display: block; flex: 0 0 auto; }
 .sidebar__title { font-size: 18px; font-weight: 800; color: #fff; line-height: 1.1; }
 .sidebar__subtitle { font-size: 11px; color: var(--sidebar-muted); }
 .sidebar__actions { display: flex; flex-direction: column; gap: 8px; }
@@ -631,6 +630,8 @@ a:hover { text-decoration: underline; }
   font-size: 15px; font-weight: 700;
 }
 .msg--assistant .msg__avatar { background: var(--primary-tint); }
+.msg--assistant .msg__avatar--bot { background: transparent; border-radius: 0; }
+.msg__avatar--bot img { display: block; }
 .msg--user .msg__avatar { background: var(--primary); color: #fff; font-size: 13px; }
 
 /* 말풍선 + 메시지 액션 버튼을 세로로 묶는 래퍼 */

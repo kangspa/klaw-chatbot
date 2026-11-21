@@ -9,6 +9,7 @@ import { defaultModelId, groupModels, isUsable, listModels, unusableReason, type
 import { branchFromMessage, deleteMessage, getSession, regenerateMessage } from '../services/sessions'
 import { localIsoWithOffset } from '../services/time'
 import type { ChatMessage } from '../types'
+import AppLogo from '../components/AppLogo'
 
 /*
  * 모델 목록은 백엔드 DB(llm_models)에서 받아온다 (services/models.ts).
@@ -346,7 +347,7 @@ export default function ChatPage() {
               <div key={m.id} className={`msg msg--${m.role}`}>
                 {m.role === 'user'
                   ? <div className="msg__avatar msg__avatar--user" aria-hidden><UserAvatar size={32} /></div>
-                  : <div className="msg__avatar" aria-hidden>⚖️</div>}
+                  : <div className="msg__avatar msg__avatar--bot" aria-hidden><AppLogo size={32} /></div>}
                 <div className="msg__body">
                   <div className={`msg__bubble${busyAction === 'regenerate' ? ' is-regenerating' : ''}${m.notice ? ' msg__bubble--notice' : ''}`}>
                     {m.role === 'assistant' ? <Markdown text={m.content} /> : m.content}
@@ -398,7 +399,7 @@ export default function ChatPage() {
 
           {liveHere && (
             <div className="msg msg--assistant" aria-live="polite">
-              <div className="msg__avatar" aria-hidden>⚖️</div>
+              <div className="msg__avatar msg__avatar--bot" aria-hidden><AppLogo size={32} /></div>
               <div className="msg__body">
                 {liveHere?.text ? (
                   <div className="msg__bubble msg__bubble--streaming"><Markdown text={liveHere.text} /></div>

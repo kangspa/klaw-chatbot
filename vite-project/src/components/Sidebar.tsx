@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useSessions } from '../context/SessionsContext'
+import AppLogo from './AppLogo'
 import SessionItem from './SessionItem'
 import UserMenu from './UserMenu'
 
@@ -40,7 +41,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
-        <span className="sidebar__logo" aria-hidden>⚖️</span>
+        <AppLogo size={32} className="sidebar__logo" />
         <div>
           <div className="sidebar__title">KLaw</div>
           <div className="sidebar__subtitle">국내법 상담 챗봇</div>
