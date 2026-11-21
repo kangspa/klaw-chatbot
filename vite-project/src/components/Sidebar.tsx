@@ -1,15 +1,14 @@
 import { useCallback, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext'
 import { useSessions } from '../context/SessionsContext'
 import SessionItem from './SessionItem'
+import UserMenu from './UserMenu'
 
 interface SidebarProps {
   onNavigate?: () => void  // 모바일에서 항목 클릭 시 사이드바 닫기
 }
 
 export default function Sidebar({ onNavigate }: SidebarProps) {
-  const { user } = useAuth()
   const { sessions, error, createNew, remove, rename } = useSessions()
   const navigate = useNavigate()
   const location = useLocation()
@@ -49,9 +48,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       </div>
 
       <div className="sidebar__actions">
-        <button className="btn btn--primary btn--block" onClick={handleNewSession}>
-          <span aria-hidden>＋</span> 새 세션
-        </button>
         <NavLink
           to="/dashboard"
           className={({ isActive }) => `btn btn--ghost btn--block${isActive ? ' is-active' : ''}`}
@@ -66,24 +62,14 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         >
           <span aria-hidden>🗂️</span> 대화 내역
         </NavLink>
-        <NavLink
-          to="/settings"
-          className={({ isActive }) => `btn btn--ghost btn--block${isActive ? ' is-active' : ''}`}
-          onClick={onNavigate}
-        >
-          <span aria-hidden>⚙️</span> 마이 페이지
-        </NavLink>
-        <NavLink
-          to="/keys"
-          className={({ isActive }) => `btn btn--ghost btn--block${isActive ? ' is-active' : ''}`}
-          onClick={onNavigate}
-        >
-          <span aria-hidden>🔑</span> API 키
-        </NavLink>
       </div>
 
       <div className="sidebar__list-head">세션 목록</div>
-      <nav className="sidebar__list">
+      <nav className="sidebar__list" aria-label="세션 목록">
+        {/* 세션 목록의 첫 줄 — 목록과 함께 스크롤된다 */}
+        <button type="button" className="sidebar__new" onClick={handleNewSession}>
+          <span className="sidebar__new-icon" aria-hidden>＋</span> 새 세션
+        </button>
         {error && <p className="sidebar__empty sidebar__empty--error">{error}</p>}
         {!error && sessions.length === 0 && (
           <p className="sidebar__empty">아직 세션이 없습니다.<br />‘새 세션’으로 시작해보세요.</p>
@@ -102,23 +88,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       </nav>
 
       <div className="sidebar__footer">
-        <div className="sidebar__user">
-          {user?.picture ? (
-            <img
-              className="sidebar__avatar sidebar__avatar--photo"
-              src={user.picture}
-              alt=""
-              referrerPolicy="no-referrer"  /* Google 프로필 이미지 차단 방지 */
-            />
-          ) : (
-            <span className="sidebar__avatar" aria-hidden>{user?.name?.[0]?.toUpperCase() ?? '?'}</span>
-          )}
-          <span className="sidebar__username" title={user?.email ?? undefined}>{user?.name}</span>
-        </div>
-        <NavLink to="/settings" className="btn btn--text" onClick={onNavigate}
-                 title={user?.googleLinked ? `Google 연결됨 (${user.email})` : 'Google 계정 연결 (선택)'}>
-          {user?.googleLinked ? 'Google 연결됨' : 'Google 연결'}
-        </NavLink>
+        <UserMenu onNavigate={onNavigate} />
       </div>
     </aside>
   )
