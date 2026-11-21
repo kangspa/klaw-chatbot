@@ -98,6 +98,8 @@ def main() -> int:
     parser.add_argument("--onedir", action="store_true", help="exe 하나 대신 폴더로 빌드")
     parser.add_argument("--console", action="store_true", help="콘솔 창을 띄우는 확인용 빌드")
     parser.add_argument("--skip-frontend", action="store_true", help="화면 빌드를 건너뛴다 (이미 빌드됨)")
+    parser.add_argument("--distpath", default=str(ROOT / "dist"),
+                        help="exe를 둘 폴더 (기본 dist — 실행 중인 KLaw.exe가 있어 덮어쓸 수 없을 때 다른 폴더로)")
     args = parser.parse_args()
     t0 = time.time()
 
@@ -129,9 +131,10 @@ def main() -> int:
     env = {**os.environ, "KLAW_BUILD_MODE": "onedir" if args.onedir else "onefile",
            "KLAW_BUILD_CONSOLE": "1" if args.console else "0",
            "KLAW_NODE_BUNDLE": str(NODE_DIR), "KLAW_LAW_MCP_BUNDLE": str(LAW_MCP_DIR)}
-    run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", str(ROOT / "klaw.spec")], cwd=ROOT, env=env)
+    run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", args.distpath, str(ROOT / "klaw.spec")],
+        cwd=ROOT, env=env)
 
-    out = ROOT / "dist" / ("KLaw" if args.onedir else "KLaw.exe")
+    out = Path(args.distpath) / ("KLaw" if args.onedir else "KLaw.exe")
     size = (sum(f.stat().st_size for f in out.rglob("*") if f.is_file()) if out.is_dir() else out.stat().st_size) / 1e6
     print(f"\n완료: {out} ({size:,.0f} MB, {time.time() - t0:.0f}초)")
     return 0
